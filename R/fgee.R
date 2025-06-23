@@ -54,7 +54,7 @@ fun.gee1step.dist <- function(orig.data, dx, formula, family, X_, Y_, namesd,
     dx <- dx[rho, on = .(index.vec)] # add rho
     rho_vec <- as.numeric(rho$rho[order(rho$index.vec)])
   }else{
-    rho_vec <- rep(0, length(rho_vec)) # induces working independence structure
+    rho_vec <- rep(0, length(dx$yindex.vec)) # induces working independence structure
     dx[,rho := 0]
   }
 
@@ -236,7 +236,7 @@ fun.gee1step.dist <- function(orig.data, dx, formula, family, X_, Y_, namesd,
     dr <- dr[rho, on = .(index.vec)] # add rho
     rho_vec <- as.numeric(rho$rho)
   }else{
-    rho_vec <- rep(0, length(rho_vec)) # induces working independence structure
+    rho_vec <- rep(0, length(dr$yindex.vec)) # induces working independence structure
     dr[,rho := 0]
   }
 
@@ -753,7 +753,7 @@ fun.gee1step.sandwich  <- function(orig.data, dx, formula, family, X_, Y_, names
 #' @param data a required data frame or data.table containing the variables in the model.
 #' @param cluster the name of the field that identifies the clusters.
 #' @param family the distribution family: gaussian, binomial, and poisson
-#' @param cov.type working correlation can be "exchangeable", "ar1", or "independence. "ar1" only supported for even grids (contact package author if you need an implementation for uneven grids!)
+#' @param cov.type working correlation can be "exchangeable", "ar1", or "independence". "ar1" only supported for evenly spaced longitudinal observations (contact package author if you need an implementation for unevenly spaced timepoints!)
 #' @param time variable name for the time variable (necessary only for "ar1").
 #' @param long.dir Logical. Defaults to \code{TRUE}, which models correlation in the longitudinal direction with the specified correlation above (cov.type). \code{TRUE} models correlation along the functional domain with an ar1 structure
 #' @param sandwich Specifies the variance estimator. Set to "fastBoot" for fast cluster bootstrapping, or "boot" for standard cluster bootstrapping.
@@ -792,7 +792,7 @@ fun.gee1step.sandwich  <- function(orig.data, dx, formula, family, X_, Y_, names
 #' @export
 
 fgee <- function(formula, data, cluster, family,
-                         cov.type = c("exchangeable", "ar1", "independence"),
+                         cov.type = "exchangeable",
                          time = NULL,
                          long.dir = TRUE,
                          sandwich = TRUE,
@@ -812,6 +812,10 @@ fgee <- function(formula, data, cluster, family,
 
   ### Check arguments
 
+  if( is.null(time) & !long.dir ){
+    stop("If long.dir=FALSE, then you must specify the `time` argument: the variable numbering the longitudinal observation of each functional observation. This can just be the row number of the functional outome matrix for each cluster.")
+  }
+
   if ( ! inherits(formula, "formula" ) ) {
     stop("The argument `formula` is not properly specified")
   }
@@ -820,6 +824,10 @@ fgee <- function(formula, data, cluster, family,
     stop("Data must be a data.frame or data.table")
   }
 
+  if( ! cov.type %in% c("exchangeable", "ar1", "independence")){
+    stop("cov.type argument must be either 'exchangeable', 'ar1', or 'independence' ")
+
+  }
 
   if ( ! (cluster %in% names(data)) ) {
     stop(paste("Cluster variable", cluster, "is not in data set"))
@@ -844,6 +852,10 @@ fgee <- function(formula, data, cluster, family,
                              data = data)
   }else{
     fit_pffr <- pffr.mod
+  }
+
+  if(fit_pffr$family[[1]] != family){
+    stop("Initial pffr fit family does not match family specified in fgee()")
   }
 
   yindex.vec <- fit_pffr$model$yindex.vec # functional domain index
@@ -938,7 +950,7 @@ fgee <- function(formula, data, cluster, family,
 
   if(cov.type == "independence"){
     # fast work around to induce working-independence structure
-    cov.type <- "ar1"
+    cov.type <- "exchangeable"
     weighted <- FALSE
   }else{
     weighted <- TRUE

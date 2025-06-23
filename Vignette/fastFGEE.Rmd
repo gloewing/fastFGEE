@@ -1,6 +1,6 @@
 ---
-title: "Functional GEE Guide Part I : Data Formating and Model Fitting"
-author: "Gabriel Loewinger"
+title: "fastFGEE Package: One-Step Functional GEE"
+# author: "Gabriel Loewinger"
 date: "`r Sys.Date()`"
 output:
   html_document:
@@ -53,7 +53,7 @@ We begin with an evenly spaced-grid and then show how to model uneven grids. We 
   
 # Installation
 
-The CRAN version of `fastFGEE` can be downloaded by executing the following command on your R console:
+The development version of `fastFGEE` can be downloaded by executing the following command on your R console (you may need to set `dependencies=TRUE`:
   
 ```{r, eval=FALSE}
 devtools::install_github("gloewing/fastFGEE")
@@ -66,12 +66,13 @@ library(fastFGEE)
 
 # Tutorial Guide
 
-We start by analyzing simulated data. Our implementation works by first fitting a function-on-scalar regression with the `pffr` in the `refund` R package, and then updating that model. Thus we need to format data for the `pffr` function. We can fit the `pffr` model ourselves and feed it in as an argument to the `fgee` function. Alternatively, we can fit the model all with one command by specifying the model formula in the `fgee` function. This example includes both a functional and scalar covariate, thus this is implicitly a concurrent function-on-scalar regression example. Our code applies to other models, and only requires one to alter their initial `pffr` fit.
+We start by analyzing simulated data. Our implementation works by first fitting a function-on-scalar regression with the `pffr` function in the `refund` R package, and then updating that model. Thus we need to format data for the `pffr` function. We can fit the `pffr` model ourselves and feed it in as an argument to the `fgee` function. Alternatively, we can fit the model all with one command by specifying the model formula in the `fgee` function. This example includes both a functional and scalar covariate, thus this is implicitly a concurrent function-on-scalar regression example. Our code applies to other models, and only requires one to alter their initial `pffr` fit.
 
 ## Data Formating
 
-We will use simulated data saved as an RDS file in the github repo `binary_ar1_data`.
-Let's load the data and take a look at its structure. Please make sure to either set your working directory in R first using `setwd()` function, or specify the file pathname. This RDS file is a dataframe where each dataframe "column" is itself a matrix or vector. We show a few of these columns and then repeat the steps we used to construct the data object so users can replicate it with their dataset. We start by showing how the dataframe's `Y` variable is a matrix with $L$ columns, where $L$ is the number of points in the functional domain.
+We will use simulated data saved as an RDS file in the `data` folder on the github repo: `binary_ar1_data`.
+
+Let's load the data and take a look at its structure. Please make sure to either set your working directory in R first using `setwd()` function, or specify the file pathname. This RDS file is a dataframe where some dataframe "columns" are themselves a matrix. We show examples of these columns and then repeat the steps we used to construct the data object so users can replicate it with their dataset. We start by showing how the dataframe's `Y` variable is a matrix with $L$ columns, where $L$ is the number of points in the functional domain.
 
 ```{r}
 dat <- readRDS("binary_ar1_data") # read in data
@@ -97,17 +98,17 @@ dat <- data.frame(Y = I(dat$Y), # save the outcome matrix Y as "AsIs" format
 ```
 
 ### FGEE for Evenly-Spaced Grids
-Let's fit the following function-on-scalar regression model, where $i \in \{1,2,\ldots,N\}$, and $j \in \{1,2,\ldots,n_i\}$, where $n_i$ is the cluster size of cluster $i$. Notice that the $X_{1,i,j}$ is a scalar covariate and $X_{2,i,j}(s)$ is a functional covariate that varies across the functional domain, indexed by $s$.
+Let's fit the following function-on-scalar regression model, where $i \in \{1,2,\ldots,N\}$, and longitduinal observation $j \in \{1,2,\ldots,n_i\}$, where $n_i$ is the cluster size of cluster $i$. Notice that the $X_{1,i,j}$ is a scalar covariate and $X_{2,i,j}(s)$ is a functional covariate that varies across the functional domain, indexed by $s$.
 
 Model 1:
 $$
 \begin{aligned} 
-& \text{logit} \left(\mathbb{P}[Y_{ij}(s) \mid {X}_{1,i,j}, ~{X}_{2,i,j}(s)] \right ) =  \beta_0(s) + {X}_{1,i,j}{\beta}_1(s) + {X}_{2,i,j}(s){\beta}_2(s)  \notag 
+& \text{logit} \left(\mathbb{E}[Y_{ij}(s) \mid {X}_{1,i,j}, ~{X}_{2,i,j}(s)] \right ) =  \beta_0(s) + {X}_{1,i,j}{\beta}_1(s) + {X}_{2,i,j}(s){\beta}_2(s)  \notag 
 \end{aligned} 
 $$ 
 
-We specify the cluster variable and correlation type as `cov.type=ar1`. We have to specify the time variable name used for the "ar1" covariance type ("time"). We fit the model and and plot the coefficient estimates. Currently, the ar1 correlation implementation works for evenly spaced longitudinal observations ("time"), but message the package authors if you need timepoints at uneven points (this only takes a minor code adjustment to implement).
-```{r}
+We specify the cluster variable and correlation type as `cov.type=ar1`. We have to specify the time variable name used for the "ar1" covariance type ("time"). We fit the model and and plot the coefficient estimates. Currently, the ar1 correlation implementation works for evenly spaced longitudinal observations ("time"), but message the package authors if you need the implementation for timepoints at uneven points (this only takes a minor code adjustment to implement).
+```{r, message=FALSE}
 fit <- fgee(formula = Y ~ X1 + X2,
                     data = dat,
                     cluster = "ID",
@@ -117,6 +118,7 @@ fit <- fgee(formula = Y ~ X1 + X2,
 
 fgee.plot(fit)
 ```
+<!-- message=FALSE, echo=TRUE, results='hide', include = TRUE -->
 
 ### Uneven Functional Outcome Grids
 Now let's show model fitting that apply to cases where the functional outcome is observed on an uneven grid. For demonstration purposes, we reuse the same dataset but the code apply to even and uneven grids. We need to reorganize the data to a "long" format with one column for the outcome, `Y`, and a second column with the functional domain index. First we concatenate all the columns together (i.e. we remove the `I()` formatting), and then use `tidyr` to reformat the data.
@@ -131,8 +133,9 @@ head(dat_wide[,1:7])
 
 Since all the column names of the outcome matrix `Y` start with the prefix `Y_`, we can reorganize them with the following code.
 
-```{r}
+```{r, message=FALSE}
 # for uneven grids 
+library(tidyr)
 dat_long <- tidyr::pivot_longer(dat_wide, 
                                cols = starts_with("Y_"), 
                                names_prefix = "Y_",
@@ -145,7 +148,6 @@ dat_long <- tidyr::pivot_longer(dat_wide,
 
 head(dat_long)
 ```
-
 Now we only have a single (numeric) column for the `Y` variable and a second column for the functional domain index (`yindex`). The last step is to make a new outcome matrix with the following format:
 ```{r}
 # for uneven grids 
@@ -156,13 +158,13 @@ head(Y.mat)
 ```
 
 Now we can fit a `refund::pffr()` model and feed that to the fgee code. Let's use 10 knots and B-splines.
-```{r}
+```{r, message=FALSE, eval=FALSE}
 knots <- 10
 spline.basis <- "bs"
 # initial fit
 fit_pffr <- refund::pffr(formula = Y ~ X1 + X2,
                          algorithm = "bam",
-                         family = "gaussian",
+                         family = "binomial",
                          discrete = TRUE,
                          yind = Y.mat$yindex,
                          ydata = Y.mat,
@@ -177,55 +179,50 @@ fit <- fgee(formula = Y ~ X1 + X2,
             cluster = "ID",
             family = "binomial",
             time = "time",
-            cov.type = "ar1")
+            cov.type = "exchangeable")
 
-fgee.plot(fit)
+# fgee.plot(fit)
 ```
-We can fit exchangeable or independence working correlation structures by adjusting the `cov.type` argument, but note that the `time` variable is unnecessary to specify here, since those correlation structures do not incorporate the timing of the longitudinal observations.
-```{r}
+We can fit exchangeable or independence working correlation structures by adjusting the `cov.type` argument. The `time` argument is unnecessary to specify here since those correlation structures do not incorporate the timing of the longitudinal observations.
+```{r, message=FALSE, eval=FALSE}
 # fgee update
 fit.ex <- fgee(formula = Y ~ X1 + X2,
-                pffr.mod = fit_pffr,
                 data = dat,
                 cluster = "ID",
                 family = "binomial",
                 cov.type = "exchangeable")
 
-fgee.plot(fit.ex)
+# fgee.plot(fit.ex)
 
 fit.ind <- fgee(formula = Y ~ X1 + X2,
-                pffr.mod = fit_pffr,
                 data = dat,
                 cluster = "ID",
                 family = "binomial",
                 cov.type = "independence")
 
-fgee.plot(fit.ind)
+# fgee.plot(fit.ind)
 ```
 
 ## Modeling correlation in the functional direction
-Sometimes we might instead wish to model correlation in the functional direction. Currently the package allows this with an AR1 structure (assuming the functional domain points are evenly spaced). To do this, we set `long.dir = FALSE`.
+Sometimes we might instead wish to model correlation in the functional direction. Currently the package allows this with an AR1 structure (assuming the functional domain points are evenly spaced). To do this, we set `long.dir = FALSE`. We need a "time" variable that specifies the longitudinal observation number (these need *not* be evenly spaced).
 
-```{r}
+```{r, message=FALSE, eval=FALSE}
 fit <- fgee(formula = Y ~ X1 + X2,
                     data = dat,
                     cluster = "ID",
                     family = "binomial",
+                    cov.type = "ar1",
+                    time = "time",
                     long.dir = FALSE)
 
-fgee.plot(fit)
+# fgee.plot(fit)
 ```
 
-# Model Object
-Here we explore the model object.
-
-# 95% Confidence Intervals and Variance types
+## 95% Confidence Intervals and Variance types
 To use a non-parametric cluster bootstrap for coefficient variance, set `sandwich = "fastBoot"`. This will influence both pointwise and joint CIs. Set `joint.CI = "np"` to estimate quantiles used in joint CI construction with a non-parametric cluster bootstrap-based procedure. These are set independently of each other. For example, a setting of `joint.CI = "np"` and `sandwich = TRUE` uses a sandwich estimator to calculate standard errors for both pointwise and joint CIs.   
 
 # How to Cite
 For use of this package or vignette, please cite the following papers:
 
-Gabriel Loewinger, Alex Levis, Erjia Cui, and Francisco Pereiera. Fast Penalized Generalized Estimating
-Equations for Large Longitudinal Functional
-Datasets. arXiv (2025).
+Gabriel Loewinger, Alex Levis, Erjia Cui, and Francisco Pereira. Fast Penalized Generalized Estimating Equations for Large Longitudinal Functional Datasets. arXiv (2025).
 

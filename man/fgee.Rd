@@ -9,7 +9,7 @@ fgee(
   data,
   cluster,
   family,
-  cov.type = c("exchangeable", "ar1", "independence"),
+  cov.type = "exchangeable",
   time = NULL,
   long.dir = TRUE,
   sandwich = TRUE,
@@ -35,7 +35,7 @@ fgee(
 
 \item{family}{the distribution family: gaussian, binomial, and poisson}
 
-\item{cov.type}{working correlation can be "exchangeable", "ar1", or "independence. "ar1" only supported for even grids (contact package author if you need an implementation for uneven grids!)}
+\item{cov.type}{working correlation can be "exchangeable", "ar1", or "independence". "ar1" only supported for evenly spaced longitudinal observations (contact package author if you need an implementation for unevenly spaced timepoints!)}
 
 \item{time}{variable name for the time variable (necessary only for "ar1").}
 
