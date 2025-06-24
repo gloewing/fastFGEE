@@ -76,7 +76,7 @@ Let's load the data and take a look at its structure. Please make sure to either
 
 ```{r}
 dat <- readRDS("binary_ar1_data") # read in data
-head(dat$Y[,1:5])
+head(as.matrix(dat$Y[,1:4]))
 ```
 
 The other variables in the dataframe are standard numeric columns.
@@ -221,8 +221,7 @@ fit <- fgee(formula = Y ~ X1 + X2,
 ## 95% Confidence Intervals and Variance types
 To use a non-parametric cluster bootstrap for coefficient variance, set `sandwich = "fastBoot"`. This will influence both pointwise and joint CIs. Set `joint.CI = "np"` to estimate quantiles used in joint CI construction with a non-parametric cluster bootstrap-based procedure. These are set independently of each other. For example, a setting of `joint.CI = "np"` and `sandwich = TRUE` uses a sandwich estimator to calculate standard errors for both pointwise and joint CIs.   
 
-# How to Cite
-For use of this package or vignette, please cite the following papers:
+<!-- # How to Cite -->
+<!-- For use of this package or vignette, please cite the following papers: -->
 
-Gabriel Loewinger, Alex Levis, Erjia Cui, and Francisco Pereira. Fast Penalized Generalized Estimating Equations for Large Longitudinal Functional Datasets. arXiv (2025).
-
+<!-- Gabriel Loewinger, Alex Levis, Erjia Cui, and Francisco Pereira. Fast Penalized Generalized Estimating Equations for Large Longitudinal Functional Datasets. arXiv (2025). -->

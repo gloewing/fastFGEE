@@ -10,7 +10,7 @@
 
 
 
-<meta name="date" content="2025-06-23" />
+<meta name="date" content="2025-06-24" />
 
 <title>fastFGEE Package: One-Step Functional GEE</title>
 
@@ -1622,7 +1622,7 @@ display: none;
 
 <h1 class="title toc-ignore">fastFGEE Package: One-Step Functional
 GEE</h1>
-<h4 class="date">2025-06-23</h4>
+<h4 class="date">2025-06-24</h4>
 
 </div>
 
@@ -1674,12 +1674,14 @@ is a matrix with <span class="math inline">\(L\)</span> columns, where
 <span class="math inline">\(L\)</span> is the number of points in the
 functional domain.</p>
 <pre class="r"><code>dat &lt;- readRDS(&quot;binary_ar1_data&quot;) # read in data
-head(dat$Y[,1:5])</code></pre>
-<div data-pagedtable="false">
-<script data-pagedtable-source type="application/json">
-{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["x"],"name":[1],"type":["I<df[,5]>[,5]"],"align":["right"]}],"data":[{"1":"<I<df[,5]>[,5]>","_rn_":"1"},{"1":"<I<df[,5]>[,5]>","_rn_":"2"},{"1":"<I<df[,5]>[,5]>","_rn_":"3"},{"1":"<I<df[,5]>[,5]>","_rn_":"4"},{"1":"<I<df[,5]>[,5]>","_rn_":"5"},{"1":"<I<df[,5]>[,5]>","_rn_":"6"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
-  </script>
-</div>
+head(as.matrix(dat$Y[,1:4]))</code></pre>
+<pre><code>##      Y_1 Y_2 Y_3 Y_4
+## [1,]   1   1   1   1
+## [2,]   1   1   1   1
+## [3,]   1   1   1   1
+## [4,]   1   1   1   0
+## [5,]   1   1   1   1
+## [6,]   1   1   1   1</code></pre>
 <p>The other variables in the dataframe are standard numeric
 columns.</p>
 <pre class="r"><code>dat &lt;- readRDS(&quot;binary_ar1_data&quot;) # read in data
@@ -1871,15 +1873,10 @@ bootstrap-based procedure. These are set independently of each other.
 For example, a setting of <code>joint.CI = &quot;np&quot;</code> and
 <code>sandwich = TRUE</code> uses a sandwich estimator to calculate
 standard errors for both pointwise and joint CIs.</p>
+<!-- # How to Cite -->
+<!-- For use of this package or vignette, please cite the following papers: -->
+<!-- Gabriel Loewinger, Alex Levis, Erjia Cui, and Francisco Pereira. Fast Penalized Generalized Estimating Equations for Large Longitudinal Functional Datasets. arXiv (2025). -->
 </div>
-</div>
-<div id="how-to-cite" class="section level1">
-<h1>How to Cite</h1>
-<p>For use of this package or vignette, please cite the following
-papers:</p>
-<p>Gabriel Loewinger, Alex Levis, Erjia Cui, and Francisco Pereira. Fast
-Penalized Generalized Estimating Equations for Large Longitudinal
-Functional Datasets. arXiv (2025).</p>
 </div>
 
 
