@@ -1,0 +1,541 @@
+---
+title: "fastFGEE: Functional Generalized Estimating Equations"
+author: "Gabriel Loewinger"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{fastFGEE: Functional Generalized Estimating Equations}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+<!-- Suggested package location: vignettes/fastFGEE.Rmd -->
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", warning = FALSE, message = FALSE)
+library(fastFGEE)
+```
+
+# Introduction
+
+`fastFGEE` fits functional generalized estimating equations (fGEE) for longitudinal functional outcomes.
+The typical workflow is:
+
+1. fit an initial function-on-scalar regression with `refund::pffr()`,
+2. choose smoothing parameters with cluster cross-validation, and
+3. optionally update the initial fit with one or more fGEE iterations.
+
+The current interface uses separate arguments for the longitudinal and functional working correlations:
+
+- `corr_long` controls the correlation structure across repeated observations within cluster,
+- `corr_fn` controls the correlation structure along the functional domain.
+
+This replaces the older single-argument `cov.type` interface used in the original vignette.
+Likewise, the old `sandwich` argument is now replaced by `var.type`.
+
+A useful way to think about the main fitting options is:
+
+- `max.iter = 1`: one-step fGEE,
+- `max.iter > 1`: fully-iterated final fit,
+- `gee.fit = FALSE`: do **not** perform the GEE update; instead, keep the initial `pffr()` fit and compute robust inference for that fit.
+
+For most users, `max.iter = 1` is the default fast estimator, while `max.iter = 100` is a practical way to approximate a fully-iterated fGEE fit.
+
+# Loading example data
+
+The source package currently includes a simulated example file named `binary_ar1_data`.
+A robust way to locate it is:
+
+```{r, eval = FALSE}
+dat_path <- system.file("data", "binary_ar1_data", package = "fastFGEE")
+if (dat_path == "") {
+  dat_path <- "binary_ar1_data"
+}
+dat0 <- readRDS(dat_path)
+```
+
+The outcome is stored as a matrix inside a data frame column. A standard wide-format data object for `fgee()` looks like this:
+
+```{r, eval = FALSE}
+dat <- data.frame(
+  Y = I(dat0$Y),
+  X1 = dat0$X1,
+  X2 = dat0$X2,
+  ID = dat0$ID,
+  time = dat0$time
+)
+
+head(as.matrix(dat$Y)[, 1:4])
+head(dat[c("ID", "X1", "X2", "time")])
+```
+
+Here each row corresponds to one longitudinal observation, and `Y` is the functional outcome observed on a grid of length `L`.
+
+# A basic one-step fit
+
+The simplest current pattern is to specify `corr_long` and `corr_fn` directly.
+For example, the following fits a one-step fGEE with AR1 correlation in the longitudinal direction and independence along the functional domain:
+
+```{r, eval = FALSE}
+fit_1step <- fgee(
+  formula = Y ~ X1 + X2,
+  data = dat,
+  cluster = "ID",
+  family = "binomial",
+  time = "time",
+  corr_long = "ar1",
+  corr_fn = "independence",
+  rho.smooth = TRUE,
+  max.iter = 1,
+  cv = "fastkfold",
+  joint.CI = "wild",
+  var.type = "sandwich"
+)
+
+fgee.plot(fit_1step)
+```
+
+The plotting method uses the fitted confidence intervals returned by `fgee()` and produces coefficient-function plots for the intercept and covariate effects.
+
+# One-step, fully-iterated, and pffr-only fits
+
+## One-step fGEE
+
+A one-step fit is obtained with `max.iter = 1`.
+This is the main fast estimator described in the paper.
+
+```{r, eval = FALSE}
+fit_1step <- fgee(
+  formula = Y ~ X1 + X2,
+  data = dat,
+  cluster = "ID",
+  family = "binomial",
+  time = "time",
+  corr_long = "ar1",
+  corr_fn = "ar1",
+  max.iter = 1,
+  cv = "fastkfold",
+  joint.CI = "wild",
+  var.type = "sandwich"
+)
+```
+
+## Fully-iterated final fit
+
+To iterate the estimating equation update beyond one step, increase `max.iter`.
+In the next example the smoothing parameters are still tuned using the default fast one-step tuning, but the final coefficient estimate is iterated until convergence or until the iteration cap is reached.
+
+```{r, eval = FALSE}
+fit_full <- fgee(
+  formula = Y ~ X1 + X2,
+  data = dat,
+  cluster = "ID",
+  family = "binomial",
+  time = "time",
+  corr_long = "ar1",
+  corr_fn = "ar1",
+  max.iter = 100,
+  cv = "fastkfold",
+  joint.CI = "wild",
+  var.type = "sandwich"
+)
+
+fit_full$n_iter
+fit_full$converged
+```
+
+## Fully-iterated tuning and fully-iterated final fit
+
+If you also want the cross-validation stage to use the fully-iterated fit instead of the one-step approximation, set `tune.method = "fully-iterated"`.
+
+```{r, eval = FALSE}
+fit_full_tuned <- fgee(
+  formula = Y ~ X1 + X2,
+  data = dat,
+  cluster = "ID",
+  family = "binomial",
+  time = "time",
+  corr_long = "ar1",
+  corr_fn = "ar1",
+  max.iter = 100,
+  tune.method = "fully-iterated",
+  cv = "fastkfold",
+  joint.CI = "wild",
+  var.type = "sandwich"
+)
+```
+
+## `gee.fit = FALSE`: robust inference for the initial `pffr()` fit only
+
+Set `gee.fit = FALSE` when you want to keep the initial `pffr()` mean fit and compute robust inference without performing the GEE update.
+This is useful when you want a direct comparison between:
+
+- the initial `pffr()` fit,
+- the one-step fGEE fit, and
+- the fully-iterated fGEE fit.
+
+```{r, eval = FALSE}
+fit_pffr_robust <- fgee(
+  formula = Y ~ X1 + X2,
+  data = dat,
+  cluster = "ID",
+  family = "binomial",
+  time = "time",
+  gee.fit = FALSE,
+  max.iter = 1,
+  joint.CI = "wild",
+  var.type = "sandwich"
+)
+```
+
+When `gee.fit = FALSE`, the package does not construct a non-independence working covariance for the update step. In practice this is the cleanest way to obtain **robust sandwich-based inference for the initial `pffr()` fit only**.
+
+A direct comparison of the three fits can be made as follows:
+
+```{r, eval = FALSE}
+p_pffr <- fgee.plot(
+  fit_pffr_robust,
+  xlab = "Functional Domain",
+  title_names = c("pffr: Intercept", "pffr: X1", "pffr: X2")
+)
+
+p_1step <- fgee.plot(
+  fit_1step,
+  xlab = "Functional Domain",
+  title_names = c("One-step: Intercept", "One-step: X1", "One-step: X2")
+)
+
+p_full <- fgee.plot(
+  fit_full,
+  xlab = "Functional Domain",
+  title_names = c("Fully-iterated: Intercept", "Fully-iterated: X1", "Fully-iterated: X2")
+)
+
+gridExtra::grid.arrange(p_pffr, p_1step, p_full, nrow = 3)
+```
+
+# Working correlation structures
+
+The new interface makes the two correlation directions explicit.
+The main combinations are summarized below.
+
+| `corr_long` | `corr_fn` | Working covariance interpretation |
+|---|---|---|
+| `"ar1"` or `"exchangeable"` | `"independence"` | Block diagonal in the **longitudinal** direction |
+| `"independence"` | `"ar1"` or `"exchangeable"` | Block diagonal in the **functional** direction |
+| `"independence"` | `"fpca"` | Block diagonal in the functional direction, with FPCA-based functional covariance |
+| non-independence | non-independence | Separable / Kronecker product working covariance |
+| `"ar1"` or `"exchangeable"` | `"fpca"` | Separable / Kronecker working covariance with a longitudinal parametric factor and an FPCA-based functional factor |
+
+## Block diagonal versus Kronecker product working covariance
+
+When exactly one direction is non-independent, the working covariance is **block diagonal**.
+This means the package models dependence in only one direction:
+
+- `corr_long != "independence"` and `corr_fn = "independence"` gives a block diagonal covariance across longitudinal observations,
+- `corr_long = "independence"` and `corr_fn != "independence"` gives a block diagonal covariance across functional observations.
+
+For the parametric block-diagonal cases (`"ar1"` or `"exchangeable"`), the package estimates a different correlation parameter for each block across the other dimension:
+
+- longitudinal block-diagonal fits estimate `rho_long(s)` across the functional domain,
+- functional block-diagonal fits estimate `rho_fn(t)` across longitudinal time.
+
+If `rho.smooth = TRUE`, those block-specific correlation curves are smoothed across the corresponding index.
+
+When **both** directions are non-independent, the package uses a **separable / Kronecker product** working covariance. In this case the correlation parameters are pooled and fixed within direction:
+
+- one pooled longitudinal correlation parameter (or longitudinal factor), and
+- one pooled functional correlation parameter (or functional factor).
+
+So the main difference is:
+
+- **block diagonal**: correlation varies by block,
+- **Kronecker / separable**: correlation is fixed within direction and shared across blocks.
+
+For Kronecker fits, each cluster must be observed on a complete longitudinal-by-functional grid.
+
+## Longitudinal block-diagonal example
+
+```{r, eval = FALSE}
+fit_long_block <- fgee(
+  formula = Y ~ X1 + X2,
+  data = dat,
+  cluster = "ID",
+  family = "binomial",
+  time = "time",
+  corr_long = "ar1",
+  corr_fn = "independence",
+  rho.smooth = TRUE,
+  max.iter = 1,
+  joint.CI = "wild",
+  var.type = "sandwich"
+)
+```
+
+This fit models within-cluster dependence across repeated observations, and allows the longitudinal correlation estimate to vary over the functional domain.
+
+## Functional block-diagonal example
+
+```{r, eval = FALSE}
+fit_fn_block <- fgee(
+  formula = Y ~ X1 + X2,
+  data = dat,
+  cluster = "ID",
+  family = "binomial",
+  time = "time",
+  corr_long = "independence",
+  corr_fn = "exchangeable",
+  rho.smooth = TRUE,
+  max.iter = 1,
+  joint.CI = "wild",
+  var.type = "sandwich"
+)
+```
+
+This fit models dependence along the functional domain while treating repeated observations as working independent.
+
+## Separable / Kronecker example
+
+```{r, eval = FALSE}
+fit_sep <- fgee(
+  formula = Y ~ X1 + X2,
+  data = dat,
+  cluster = "ID",
+  family = "binomial",
+  time = "time",
+  corr_long = "ar1",
+  corr_fn = "ar1",
+  max.iter = 1,
+  joint.CI = "wild",
+  var.type = "sandwich"
+)
+```
+
+This fit uses a separable working covariance with one longitudinal AR1 factor and one functional AR1 factor.
+
+## FPCA-based functional covariance
+
+`fastFGEE` also allows an FPCA-based covariance in the functional direction by setting `corr_fn = "fpca"`.
+
+### FPCA functional block-diagonal fit
+
+```{r, eval = FALSE}
+fit_fpca_block <- fgee(
+  formula = Y ~ X1 + X2,
+  data = dat,
+  cluster = "ID",
+  family = "binomial",
+  time = "time",
+  corr_long = "independence",
+  corr_fn = "fpca",
+  max.iter = 1,
+  joint.CI = "wild",
+  var.type = "sandwich"
+)
+```
+
+Here the longitudinal direction is working independent, and the functional blocks are modeled with an FPCA-based covariance estimate.
+
+### FPCA plus longitudinal correlation: separable / Kronecker fit
+
+```{r, eval = FALSE}
+fit_fpca_sep <- fgee(
+  formula = Y ~ X1 + X2,
+  data = dat,
+  cluster = "ID",
+  family = "binomial",
+  time = "time",
+  corr_long = "ar1",
+  corr_fn = "fpca",
+  max.iter = 1,
+  joint.CI = "wild",
+  var.type = "sandwich"
+)
+```
+
+This combines a parametric longitudinal factor with an FPCA-based functional factor in a separable working covariance.
+
+# Supplying a pre-fit `refund::pffr()` object
+
+A useful feature of the package is that you can fit `refund::pffr()` yourself and then pass the fitted object through `pffr.mod`.
+This is particularly helpful when:
+
+- the functional grid is irregular,
+- you want to control the initial `pffr()` call directly, or
+- you want to compare the initial fit with the fGEE update.
+
+The main thing to remember is that `pffr.mod` supplies the aligned long-format response and design matrix, while `data` should still be the original wide data set used to define the cluster structure.
+
+## Example: irregular functional grid
+
+The following code shows the workflow using a user-supplied `pffr()` fit.
+
+```{r, eval = FALSE}
+# Start from the wide data object used above
+Y_wide <- as.matrix(dat$Y)
+colnames(Y_wide) <- paste0("Y_", seq_len(ncol(Y_wide)))
+
+dat_wide <- data.frame(
+  ID = dat$ID,
+  X1 = dat$X1,
+  X2 = dat$X2,
+  time = dat$time,
+  Y_wide
+)
+
+# Convert the matrix outcome to long format
+# (shown here with tidyr for readability)
+dat_long <- tidyr::pivot_longer(
+  dat_wide,
+  cols = tidyselect::starts_with("Y_"),
+  names_to = "yindex",
+  names_prefix = "Y_",
+  values_to = "Y",
+  values_drop_na = FALSE
+)
+
+dat_long$yindex <- as.integer(dat_long$yindex)
+dat_long$time <- as.numeric(dat_long$time)
+
+# Construct the ydata object expected by refund::pffr()
+Y.mat <- data.frame(
+  .obs = seq_len(nrow(dat_long)),
+  .index = dat_long$yindex,
+  .value = dat_long$Y
+)
+
+fit_pffr <- refund::pffr(
+  formula = Y ~ X1 + X2,
+  algorithm = "bam",
+  family = binomial(),
+  discrete = TRUE,
+  yind = Y.mat$.index,
+  ydata = Y.mat,
+  bs.yindex = list(bs = "bs", k = 11),
+  data = dat_long
+)
+```
+
+Now update that initial fit with `fgee()`.
+Notice that `pffr.mod` receives the fitted `pffr()` object, but `data` is still the original wide data frame.
+
+```{r, eval = FALSE}
+fit_from_pffr <- fgee(
+  formula = Y ~ X1 + X2,
+  pffr.mod = fit_pffr,
+  data = dat,
+  cluster = "ID",
+  family = "binomial",
+  time = "time",
+  corr_long = "exchangeable",
+  corr_fn = "independence",
+  max.iter = 1,
+  joint.CI = "wild",
+  var.type = "sandwich"
+)
+
+fgee.plot(fit_from_pffr)
+```
+
+# Variance estimators and confidence intervals
+
+The variance estimator and the joint confidence interval construction are controlled separately.
+
+- `var.type` chooses the covariance estimator for the coefficient vector,
+- `joint.CI` chooses how the joint critical values are obtained.
+
+Common choices are:
+
+```{r, eval = FALSE}
+# Sandwich variance + wild-bootstrap critical values
+fit_sw <- fgee(
+  formula = Y ~ X1 + X2,
+  data = dat,
+  cluster = "ID",
+  family = "binomial",
+  time = "time",
+  corr_long = "ar1",
+  corr_fn = "ar1",
+  var.type = "sandwich",
+  joint.CI = "wild"
+)
+
+# Fast cluster bootstrap variance + wild-bootstrap critical values
+fit_fb <- fgee(
+  formula = Y ~ X1 + X2,
+  data = dat,
+  cluster = "ID",
+  family = "binomial",
+  time = "time",
+  corr_long = "ar1",
+  corr_fn = "ar1",
+  var.type = "fastboot",
+  boot.samps = 2000,
+  joint.CI = "wild"
+)
+
+# Sandwich variance + parametric joint critical values
+fit_param <- fgee(
+  formula = Y ~ X1 + X2,
+  data = dat,
+  cluster = "ID",
+  family = "binomial",
+  time = "time",
+  corr_long = "ar1",
+  corr_fn = "ar1",
+  var.type = "sandwich",
+  joint.CI = "parametric"
+)
+```
+
+A practical default for many applications is `var.type = "sandwich"` with `joint.CI = "wild"`.
+This is also the most direct setting when comparing `gee.fit = FALSE`, one-step, and fully-iterated fits.
+
+# Gaussian exact mode
+
+For Gaussian responses with the identity link, `exact = TRUE` uses the exact penalized GLS-style update instead of the approximate one-step update.
+For non-Gaussian families, `exact = TRUE` is ignored.
+
+```{r, eval = FALSE}
+fit_gaussian_exact <- fgee(
+  formula = Y ~ X1 + X2,
+  data = dat,
+  cluster = "ID",
+  family = "gaussian",
+  time = "time",
+  corr_long = "ar1",
+  corr_fn = "ar1",
+  exact = TRUE,
+  max.iter = 1,
+  joint.CI = "wild",
+  var.type = "sandwich"
+)
+```
+
+# Notes on the updated interface
+
+Compared with the older vignette, the main argument changes are:
+
+- `cov.type` is replaced by `corr_long` and `corr_fn`,
+- `sandwich` is replaced by `var.type`,
+- `max.iter` now explicitly controls one-step versus fully-iterated fitting,
+- `gee.fit = FALSE` gives robust inference for the initial `pffr()` fit,
+- `pffr.mod` is the supported way to pass in a pre-fit `refund::pffr()` object.
+
+In most analyses, the current recommended pattern is:
+
+```{r, eval = FALSE}
+fit <- fgee(
+  formula = Y ~ X1 + X2,
+  data = dat,
+  cluster = "ID",
+  family = "binomial",
+  time = "time",
+  corr_long = "ar1",
+  corr_fn = "ar1",
+  max.iter = 1,
+  cv = "fastkfold",
+  joint.CI = "wild",
+  var.type = "sandwich"
+)
+```
