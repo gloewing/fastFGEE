@@ -10,6 +10,13 @@ vignette: >
 ---
 
 <!-- Suggested package location: vignettes/fastFGEE.Rmd -->
+# Installation
+
+The development version of `fastFGEE` can be installed with:
+
+```{r, eval = FALSE}
+remotes::install_github("gloewing/fastFGEE", build_vignettes = TRUE)
+```
 
 ```{r setup, include = FALSE}
 knitr::opts_chunk$set(collapse = TRUE, comment = "#>", warning = FALSE, message = FALSE)
