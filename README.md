@@ -23,7 +23,7 @@ in the longitudinal and/or functional direction.
 ### Development version
 
 ```r
-remotes::install_github("gloewing/fastFGEE", build_vignettes = TRUE)
+remotes::install_github("gloewing/fastFGEE")
 ```
 
 
