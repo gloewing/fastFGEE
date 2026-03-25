@@ -2,7 +2,7 @@
 % Please edit documentation in R/fgee.plot.R
 \name{fgee.plot}
 \alias{fgee.plot}
-\title{Default fastFGEE plotting}
+\title{Plot coefficient estimates from a fitted \code{fastFGEE} model}
 \usage{
 fgee.plot(
   fit,
@@ -21,62 +21,38 @@ fgee.plot(
 )
 }
 \arguments{
-\item{num_row}{An integer that specifies the number of rows the plots will be displayed on. Defaults to p/2, where p is the number of predictors.}
+\item{fit}{A fitted object returned by \code{\link{fgee}}.}
 
-\item{xlab}{A string that specifies the x-axis title (i.e., for the functional domain). Defaults to ``Functional Domain''}
+\item{num_row}{Number of rows used when arranging plots.}
 
-\item{title_names}{A vector of strings that has length equal to number of covariates (plus intercept if relevant). Allows one to change the titles of the plots. Defaults to NULL which uses the variable names in the dataframe for titles.}
+\item{xlab}{X-axis label.}
 
-\item{ylim}{A 2-dimensional vector that specifies limits of the y-axis in plots.}
+\item{title_names}{Optional replacement titles for coefficient plots.}
 
-\item{align_x}{A scalar: aligns the plot to a certain point on the functional domain and sets this as 0. This is particularly useful if the functional domain is time. Defaults to 0.}
+\item{ylim}{Optional y-axis limits.}
 
-\item{x_rescale}{A scalar: rescales the x-axis of plots which is especially useful if time is the functional domain and one wishes to, for example, account for the sampling rate. Defaults to 1.}
+\item{align_x}{Optional value used to re-center the x-axis.}
 
-\item{y_val_lim}{A positive scalar that extends the y-axis by a factor for visual purposes. Defaults to 1.10. Typically does not require adjustment.}
+\item{x_rescale}{Optional x-axis rescaling factor.}
 
-\item{y_scal_orig}{A positive scalar that determines how much to reduce the length of the y-axis on the bottom. Defaults to 0.05. Typically does not require adjustment.}
+\item{y_val_lim}{Expansion factor for the upper y-axis limit.}
 
-\item{return}{Logical, indicating whether to return the data frame with the coefficient estimates and 95\% confidence intervals (CIs). Defaults to \code{FALSE}.}
+\item{y_scal_orig}{Expansion factor for the lower y-axis limit.}
 
-\item{terms.plot}{Logical. Uses mgcv::plot.gam output to produce coefficient plots.}
+\item{return}{Logical; if \code{TRUE}, return the plotting data instead of only
+drawing the plots.}
 
-\item{all.terms}{Logical. Defaults to \code{TRUE}. If set to TRUE then the partial effects of parametric model components are also plotted. See ?mgcv::plot.gam for more}
+\item{terms.plot}{Logical; retained for backwards compatibility.}
 
-\item{int.uncertainty}{Logical. Defaults to \code{FALSE}. Uses mgcv::predict.gam() to account for uncertainty in the itercept.}
+\item{all.terms}{Logical; retained for backwards compatibility.}
 
-\item{fgeeobj}{A object returned from the \code{fgee} function}
+\item{int.uncertainty}{Logical; retained for backwards compatibility.}
 }
 \value{
-Plots of point estimates and CIs. If \code{return = TRUE}, also returns
-a list where each element is a data frame with the coefficient estimates and 95\% CIs.
+Invisibly returns a list of plotting data frames when
+\code{return = TRUE}; otherwise draws plots.
 }
 \description{
-Take a fitted \code{fgee} object produced by \code{fastFGEE::fgee()},
-plots the point estimates, as well as 95\\% pointwise and joint confidence intervals.
-}
-\examples{
-data("DTI", package = "refund")
-set.seed(1)
-DTI_use <- DTI[DTI$ID \%in\% sample(DTI$ID, 25),]
-DTI_use <- data.frame(cca = I(DTI_use$cca),
-                      case = DTI_use$case,
-                      visit = 1*(DTI_use$visit),
-                      sex = DTI_use$sex,
-                      ID = DTI_use$ID)
-
-fit_dti <- fastFGEE::fgee(formula = cca ~ case + visit,
-                          cluster = "ID",
-                          family = "gaussian", 
-                          cov.type = "exchangeable"
-                          data = DTI_use) # fit model
-                          
-fastFGEE::fgee.plot(fit_dti) # plot
-}
-\references{
-Loewinger, G., Levis, L., Cui, E., Pereira, F. (2025). Fast Penalized
-Generalized Estimating Equations for Large Longitudinal Functional Datasets. \emph{arXiv}.
-}
-\author{
-Gabriel Loewinger \email{gloewinger@gmail.com}
+Produces coefficient plots with pointwise and joint confidence intervals
+when available.
 }

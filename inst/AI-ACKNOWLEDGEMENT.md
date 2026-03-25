@@ -1,0 +1,1 @@
+Portions of this package were developed with assistance from large language models, including Gemini 2.5 Pro, Claude Sonnet 4.5, and ChatGPT 5.2 Pro. Their use was limited to code drafting, code refactoring, and optimization support. All generated code was reviewed, tested, and validated by the package author.

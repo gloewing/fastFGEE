@@ -2,17 +2,20 @@
 % Please edit documentation in R/fgee.R
 \name{fgee}
 \alias{fgee}
-\title{Estimate parameters using one-step algorithm}
+\title{Fits functional generalized estimating equations (fGEE) for
+longitudinal functional outcomes using a one-step estimator,
+with optional fully iterated final estimation.}
 \usage{
 fgee(
   formula,
   data,
   cluster,
   family,
-  cov.type = "exchangeable",
+  corr_fn = "ar1",
+  corr_long = "ar1",
   time = NULL,
   long.dir = TRUE,
-  sandwich = TRUE,
+  var.type = "sandwich",
   pffr.mod = NULL,
   knots = NULL,
   bs = "bs",
@@ -20,78 +23,111 @@ fgee(
   cv.grid = NULL,
   exact = FALSE,
   rho.smooth = FALSE,
-  joint.CI = TRUE,
-  return.early = FALSE,
-  V.inv = NULL,
+  joint.CI = "wild",
+  gee.fit = TRUE,
+  linpred_method = c("accumulate", "matrix"),
+  clip_mu = 0,
+  m.pffr = c(2, 1),
+  check_alignment = TRUE,
+  max.iter = 1,
+  tune.method = c("one-step", "fully-iterated"),
+  boot.samps = 3000,
   ...
 )
 }
 \arguments{
-\item{formula}{an object of class "formula": a symbolic description of the model to be fitted.}
+\item{formula}{A model formula. The left-hand side should be a functional
+response stored as a matrix-like column (typically wrapped in \code{I()}).}
 
-\item{data}{a required data frame or data.table containing the variables in the model.}
+\item{data}{A data frame containing the variables in \code{formula}.}
 
-\item{cluster}{the name of the field that identifies the clusters.}
+\item{cluster}{Name of the cluster identifier column.}
 
-\item{family}{the distribution family: gaussian, binomial, and poisson}
+\item{family}{A family object or family name understood by \code{refund::pffr()}.}
 
-\item{cov.type}{working correlation can be "exchangeable", "ar1", or "independence". "ar1" only supported for evenly spaced longitudinal observations (contact package author if you need an implementation for unevenly spaced timepoints!)}
+\item{corr_fn}{Working correlation in the functional direction.
+One of \code{"independent"}, \code{"exchangeable"}, \code{"ar1"}, or \code{"fpca"}.}
 
-\item{time}{variable name for the time variable (necessary only for "ar1").}
+\item{corr_long}{Working correlation in the longitudinal direction.
+One of \code{"independent"}, \code{"exchangeable"}, or \code{"ar1"}.}
 
-\item{long.dir}{Logical. Defaults to \code{TRUE}, which models correlation in the longitudinal direction with the specified correlation above (cov.type). \code{TRUE} models correlation along the functional domain with an ar1 structure}
+\item{time}{Optional name of the longitudinal ordering variable.}
 
-\item{sandwich}{Specifies the variance estimator. Set to "fastBoot" for fast cluster bootstrapping, or "boot" for standard cluster bootstrapping.}
+\item{long.dir}{Logical; retained for backwards compatibility.}
 
-\item{pffr.mod}{Instead of specifying the formula above, one can instead fit a refund::pffr() model and feed in the model object to provide the initial fit.}
+\item{var.type}{Variance estimator. One of \code{"sandwich"}, \code{"fastboot"},
+or \code{"boot"}. For bootstraping, we recommend "fastboot" over "boot" because it is more thoroughly tested.}
 
-\item{knots}{Number of knots used for initial pffr fit. Default to round(L/4) where L is the number of functional domain points.}
+\item{pffr.mod}{Optional fitted \code{refund::pffr()} object to use as the
+initial estimator.}
 
-\item{bs}{Spline basis type used.}
+\item{knots}{Number of spline knots for the initial \code{pffr()} fit.}
 
-\item{cv}{Cross-validation type. Defaults to cluster "fastkfold" but can also use "kfold" for standard cluster CV, or TRUE for hold-one-cluster-out CV.}
+\item{bs}{Basis type passed to \code{refund::pffr()}.}
 
-\item{cv.grid}{A list of vectors, where each vector is a grid to sequentially tune on. Default uses a list of three lists to tune over, which seems to work well in practice.}
+\item{cv}{Cross-validation mode used for smoothing parameter selection.}
 
-\item{exact}{Defaults to FALSE. For continuous outcomes, setting \code{exact=TRUE} uses the closed-form expression (a penalized weighted-least squares) instead of the closely-related one-step estimator.}
+\item{cv.grid}{Optional grid (or staged grids) of smoothing parameters.}
 
-\item{joint.CI}{Defaults to TRUE which uses a parameteric bootstrap. For a non-parametric bootstrap, set \code{joint.CI = "np"}.}
+\item{exact}{Logical; for Gaussian identity-link models, use the exact
+penalized weighted least-squares update.}
 
-\item{return.early}{Defaults to FALSE. Calculates one-step components and returns them before parameter tuning or one-step update.}
+\item{rho.smooth}{Logical; smooth pointwise correlation estimates over the
+relevant index when applicable.}
 
-\item{V.inv}{Defaults to NULL. This is an optional inverse-covariance matrix (of dimension Ln_i x Ln_i) to be used instead of the working correlations above. Experimental feature that assumes fixed sample size across subjects. Contact package authors if you need this feature.}
+\item{joint.CI}{Logical or character controlling joint confidence intervals.}
 
-\item{...}{currently disregarded}
+\item{gee.fit}{Logical; if \code{FALSE}, return uncertainty quantification around
+the initial fit without the GEE update.}
 
-\item{rhoSmooth}{Defaults to FALSE Determines wheter the pointwise correlation parameter estimates are smoothed across the functional domain.}
+\item{linpred_method}{Method used to form linear predictors.}
+
+\item{clip_mu}{Lower bound used for numerical stabilization of fitted means.}
+
+\item{m.pffr}{Penalty order specification passed to \code{refund::pffr()}.}
+
+\item{check_alignment}{Logical; check alignment between the wide data and the
+\code{pffr()} long representation.}
+
+\item{max.iter}{Maximum number of GEE iterations. \code{1} gives the one-step fit.}
+
+\item{tune.method}{Smoothing-parameter tuning method.}
+
+\item{boot.samps}{Number of bootstrap replicates used when applicable.}
+
+\item{...}{Additional arguments reserved for future use.}
 }
 \value{
-A "fgee1step" object. \code{model} is the updated one-step model object, so mgcv::plot.gam() can be applied to this object. \code{pffr_initial.fit} contains the initial fit refund::pffr object.
-\code{vb} contains the variance/covariance matrix for the coefficient estimates (sandwich or bootstrap-based). \code{qn} contains the joint CI quantiles. \code{di} and \code{wi} are lists of length N, with the updated cluster-specific estimating equation and hessian terms (without the penalty).
+A "fgee1step" object. \code{pffr_initial.fit} contains the initial fit refund::pffr object.
+\code{vb} contains the variance/covariance matrix for the coefficient estimates (sandwich or bootstrap-based).
+\code{qn} contains the joint CI quantiles. \code{di} and \
+\code{wi} are lists of length N, with the updated cluster-specific estimating equation and hessian terms (without the penalty).
 }
 \description{
-Estimate parameters using one-step algorithm
+Fits functional generalized estimating equations (fGEE) for
+longitudinal functional outcomes using a one-step estimator,
+with optional fully iterated final estimation.
 }
 \examples{
+\dontrun{
 library(fastFGEE)
-data("DTI", package = "refund")
-set.seed(1)
-DTI_use <- DTI[DTI$ID \%in\% sample(DTI$ID, 45),]
-DTI_use <- data.frame(cca = I(DTI_use$cca),
-                      case = DTI_use$case, visit = 1*(DTI_use$visit),
-                      sex = DTI_use$sex,
-                      ID = DTI_use$ID)
- fit_dti <- fastFGEE::fgee(formula = cca ~ case + visit,
-                           cluster = "ID",
-                           data = DTI_use,
-                           family = "gaussian",
-                           cov.type = "exchangeable")
- fastFGEE::fgee.plot(fit_dti)
- plot(fit_dti$model)
+data("data", package = "fastFGEE")
+fit <- fgee(
+ formula = Y ~ X1 + X2,
+ data = d,
+ cluster = "ID",
+ family = binomial(link = "logit"),
+ time = "time",
+ corr_long = "exchangeable",
+ corr_fn = "independent")
+
+ fgee.plot(fit)
+ }
+
 }
 \references{
-Loewinger, G., Levis, A., Cui, E., Pereira, F. (2025). Fast Functional Generalized Estimating Equations for
-Longitudinal Functional Data at Scale.
+Gabriel Loewinger, Alex W. Levis, Erjia Cui, and Francisco Pereira. (2025).
+Fast Penalized Generalized Estimating Equations for Large Longitudinal Functional Datasets. \emph{arXiv:2506.20437}.
 }
 \author{
 Gabriel Loewinger \email{gloewinger@gmail.com}

@@ -1,0 +1,14 @@
+gee1step.Rproj
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+.DS_Store
+data-raw/
+local-testing/
+src/*.o
+src/*.so
+src/*.dll
+.Rdata
+.httr-oauth
+.quarto

@@ -1,6 +1,6 @@
 
 library(lme4) ## mixed models
-library(refund) ## fpca.face 
+library(refund) ## fpca.face
 library(dplyr) ## organize lapply results
 library(mgcv) ## smoothing in step 2
 library(mvtnorm) ## joint CI
@@ -12,11 +12,11 @@ library(sanic)
 library(SuperGauss)
 library(SimCorMultRes)
 
-simParams <- expand.grid(c(50), # 100 30, 
+simParams <- expand.grid(c(30), # 100 30,
                          c("fastkfold"), #c(TRUE, "kfold", "fastCV"), # "fastBoot"
                          c(TRUE), # TRUE, FALSE
                          c(FALSE),  # FALSE, TRUE, "fastBoot" # FALSE, TRUE, "fastBoot"
-                         c(50), # 15, 30, 100
+                         c(10), # 15, 30, 100
                          c(100), # L
                          c(0.75) # 0.25, 0.75
 )
@@ -50,11 +50,11 @@ wd <- "/Users/loewingergc/Desktop/NIMH Research/functional_GEE/gee1step-main/sou
 reps <- 300 # replicates of simulations
 boots <- 5000 # for naive bootstrap permutation test
 nknots <- 10 # 3 and 45 works well
-n_sim <- simParams[runNum, 1] #c(100, 250, 10)[runNum]#simParams[runNum, 4]   # 10, 20, 30, 50, 70, 
+n_sim <- simParams[runNum, 1] #c(100, 250, 10)[runNum]#simParams[runNum, 4]   # 10, 20, 30, 50, 70,
 N_i <- simParams[runNum, 5]
-cv <- simParams[runNum, 2] # c(TRUE, "fastBoot", "fastCV") 
-rho.smooth <- simParams[runNum, 3] #c(TRUE, FALSE) 
-var.type <- simParams[runNum, 4] #"boot" # TRUE # "boot # FALSE 
+cv <- simParams[runNum, 2] # c(TRUE, "fastBoot", "fastCV")
+rho.smooth <- simParams[runNum, 3] #c(TRUE, FALSE)
+var.type <- simParams[runNum, 4] #"boot" # TRUE # "boot # FALSE
 bs <- "ps"
 comparison_methods <- TRUE # whether to fit other models besides fLME
 L <- simParams$L[runNum] #200 # originally 100
@@ -84,13 +84,13 @@ if(n_delta == "n.5"){
 }
 
 set.seed(iter)
-dat_sim <-  GenerateData(Nsubj=n_sim, 
-                         numFunctPoints = L, 
+dat_sim <-  GenerateData(Nsubj=n_sim,
+                         numFunctPoints = L,
                          min_visit=N_i,
                          max_visit=N_i,
-                         numLongiPoints = N_i, 
-                         sigma_sq = sigma_sq, 
-                         sigma_z11 = z11, sigma_z12 = z12, 
+                         numLongiPoints = N_i,
+                         sigma_sq = sigma_sq,
+                         sigma_z11 = z11, sigma_z12 = z12,
                          sigma_z21 = 2, sigma_z22 = 1,
                          corstr = cov.type,
                          divFactor = divFactor, # divide betas by this for binomial to avoid all 1s
@@ -104,10 +104,11 @@ Y <- as.data.frame(dat_sim$data$Y)
 colnames(Y) <- paste0("Y_", 1:ncol(Y))
 L <- ncol(Y)
 X <- model.matrix(~X1 + X2, data = data.frame(dat_sim$data$Cov))
-d = data.frame(Y = I(Y), 
-               ID = dat_sim$data$subjID, 
+d = data.frame(Y = I(Y),
+               ID = dat_sim$data$subjID,
                dat_sim$data$Cov,
                time = dat_sim$time)
 
-setwd(save.wd)
-saveRDS(d, "binary_ar1_data")
+setwd("~/Desktop/NIMH Research/functional_GEE/fastFGEE/data")
+save(d, file="data.rda")
+# saveRDS(d, "binary_ar1_data")

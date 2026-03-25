@@ -1,15 +1,18 @@
 Package: fastFGEE
-Title: Fits fast Functional Generalized Estimating Equations with a one-step estimator. 
-Version: 0.0.0.1
-Authors@R: 
-    person("Gabriel", "Loewinger", , "gloewinger@gmail.com", role = c("aut", "cre"),
-           comment = c(ORCID = 0000-0002-0755-8520))
-Description: fastFGEE fits functional generalized estimating equations (fGEE) with a one-step estimator for binary, count, and continuous longitudinal functional outcomes. By using a one-step estimator, the method scales to large datasets. Currently allows for pointwise independence, exchangeable, and AR1 working correlation structures although there exists some basic functionality for general working correlation structures.
+Title: Fast Functional Generalized Estimating Equations via a One-Step Estimator
+Version: 0.1.0
+Authors@R:
+    person("Gabriel", "Loewinger", email = "gloewinger@gmail.com",
+           role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-0755-8520"))
+Description: Fits functional generalized estimating equations (fGEE) for longitudinal functional outcomes and covariates using a one-step estimator that is fast even for large cluster sizes or large numbers of clusters. The package supports quasi-likelihoods derived from a range of families, common link functions, and many working correlation structures. Uncertainty quantification is based on a sandwich variance estimator that yields valid inference even when the working correlation is misspecified.
 License: GPL (>= 3)
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.2
-Imports: 
+RoxygenNote: 7.3.3
+Depends:
+    R (>= 4.2)
+Imports:
     data.table,
     ggplot2,
     gridExtra,
@@ -18,5 +21,14 @@ Imports:
     mgcv,
     refund,
     Rfast,
-    sanic,
     SuperGauss
+Suggests:
+    irregulAR1,
+    knitr,
+    rmarkdown,
+    sanic,
+    Rcpp,
+    RcppArmadillo
+VignetteBuilder: knitr
+URL: https://github.com/gloewing/fastFGEE
+BugReports: https://github.com/gloewing/fastFGEE/issues

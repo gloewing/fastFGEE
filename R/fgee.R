@@ -1,939 +1,191 @@
-# Internal estimation function
-#
-fun.gee1step.dist <- function(orig.data, dx, formula, family, X_, Y_, namesd,
-                              N_clusters, clusters, glmfit, yindex.vec, bs,
-                              cov.type = "exchangeable", parallel = FALSE,
-                              sandwich = FALSE, cv = TRUE, cv.grid, B = 2000,
-                              rho.smooth = TRUE, joint.CI = TRUE, weighted = TRUE,
-                              return.early = FALSE, V.inv = NULL, time = NULL,
-                              index = "yindex.vec") {
-
-
-  p <- NULL
-  resid <- NULL
-  wt_ij <- NULL
-  rho_ij <- NULL
-  sum_r <- NULL
-  uss_r <- NULL
-  N <- NULL
-  cname_ <- "cname_" #NULL # GCL changed 3-2-25
-  v <- NULL
-  residv <- NULL
-  Y <- NULL
-  yindex.vec <- NULL
-  rho <- NULL
-  time <- NULL
-
-  # if(parallel)  num_cores <- as.integer(round(parallel::detectCores() * 0.85))
-  ###
-
-  dr <- data.table::copy(dx) # for robust se
-
-  dx[, p := stats::predict.glm(glmfit, type = "response")]
-
-  if (family == "binomial") {
-    dx[, v := p * (1-p)]
-  }else if (family == "poisson") {
-    dx[, v := p]
-  }else if (family == "gaussian") {
-    dx[, resid := as.numeric(glmfit$residuals)  ] # vectorize outcome from original data]
-    dx[, v := stats::var(resid), by = yindex.vec] # this assumes homoscedasticity
-    dx[, resid := NULL]
-  }
-
-  dx[, resid := (Y - p) / sqrt(v) ]
-  namesd <- X_
-
-  # correlation parameter
-  if(weighted){
-    rho <- corr.estimate(dx, corr = cov.type,
-                         rho.smooth = rho.smooth,
-                         glmfit = glmfit,
-                         index = index)
-    dx[, index.vec := get(index)]
-    dx <- dx[rho, on = .(index.vec)] # add rho
-    rho_vec <- as.numeric(rho$rho[order(rho$index.vec)])
-  }else{
-    rho_vec <- rep(0, length(dx$yindex.vec)) # induces working independence structure
-    dx[,rho := 0]
-  }
-
-  # get penalties
-  sp_vec <- glmfit["sp"][[1]]
-  penalty_diag <- penalty.construct(model=glmfit, nonSmooths = 0) # nonSmooths set to 0 here
-  if(all(sp_vec==0)){
-    penalty_diag <- matrix(0, ncol = ncol(penalty_diag), nrow = nrow(penalty_diag))
-  }
-
-  ### Estimate beta
-  yindex <- unique(dx$yindex.vec)
-  L <- length(yindex)
-  message("Calculating W1")
-  if(is.null(V.inv)){
-    wi = W.estimate(dx = dx, namesd = namesd,
-                    cname_ = cname_, family = family,
-                    corr = cov.type, dt = TRUE,
-                    index = index)
-  }else{
-    # exact V.inv given
-    message("full W")
-    dx_list = lapply(clusters, function(i) dx[cname_ == i])
-    wi <- lapply(clusters, function(i)
-      .getW_true(dx_list[[i]],
-                 namesd,
-                 V.inv = V.inv,
-                 rho = NULL,
-                 family = family))
-  }
-
-  gc()
-  message("Calculating D1")
-  if(is.null(V.inv)){
-    di <- D.estimate(dx = dx, namesd = namesd,
-                     cname_ = cname_, family = family,
-                     corr = cov.type, dt = TRUE,
-                     index = index)
-  }else{
-    message("full D")
-    di <- lapply(clusters, function(i)
-      .getD_true(dx_list[[i]],
-                 namesd,
-                 V.inv = V.inv,
-                 rho = NULL,
-                 family = family))
-    rm(dx_list)
-  }
-  gc()
-
-  if(return.early){
-    result <- list(beta = as.vector(glmfit$coefficients),
-                   rho = rho_vec,
-                   di = di,
-                   wi = wi,
-                   model = glmfit)
-
-    return(result)
-  }
-
-  ##############
-  # tuning
-  ##############
-  message("Smoothing Parameter Tuning")
-  if(!is.null(cv.grid)){
-    if(is.list(cv.grid)){
-      grid <- cv.grid
-      if(length(cv.grid) > 1){
-        tune.ind <- TRUE
-        # this only needs to be applied to the first one
-      }else{
-        tune.ind <- ifelse(length(grid[[1]]) > 1, TRUE, FALSE) # don't tune if there's only 1 tuning parameter value in the one set
-        if(tune.ind){
-          # if its a list but only one element (one grid) then duplicate for pre-tune
-          grid <- list(grid, grid) # dublicate for pre-tune
-        }
-      }
-    }else{
-      # not a list
-      grid <- list(cv.grid)
-      tune.ind <- ifelse(length(grid[[1]]) > 1, TRUE, FALSE) # don't tune if there's only 1 tuning parameter set
-    }
-
-    # pre-tuning (scale smoothing parameters by same scalar - not expand.grid)
-    if(tune.ind)  grid[[1]] <- do.call(cbind, lapply(glmfit$sp, function(x) x*grid[[1]]))
-
-    if(tune.ind){
-      # if multiple tuning values provided
-      cv.lambda <- fun.gee1step.cv(w = wi,
-                                   d = di,
-                                   namesd = namesd,
-                                   grid,
-                                   data = dx,#orig.data,
-                                   cname_ = "cluster", # may need to update this to be more general
-                                   fit.initial = glmfit,
-                                   cv = cv,
-                                   B = 500,
-                                   seed = 1)
-
-      message("CV Complete")
-      penalty_diag <- penalty.construct(model=glmfit,
-                                        lambda = cv.lambda$lambda.star,
-                                        nonSmooths = 0) # nonSmooths set to 0 here
-    }else{
-      cv.lambda <- data.frame(mse = NA,
-                              lambda.star = grid,
-                              grid = grid,
-                              bias = NA,
-                              asy.var = NA)
-
-      penalty_diag <- penalty.construct(model=glmfit,
-                                        lambda = grid,
-                                        nonSmooths = 0) # nonSmooths set to 0 here
-    }
-
-  }else{
-    # do no tune
-    message("No penalty")
-    penalty_diag <- penalty.construct(model=glmfit,
-                                      lambda = glmfit$sp * 0,
-                                      nonSmooths = 0)
-    cv.lambda <- NULL
-  }
-
-  # bootstrap
-  if(sandwich == "fastBoot" | sandwich == "boot"){
-    # estimate var/cov matrix if bootstrap
-    # need to use initial di, wi, beta (not after one-step)
-    # IDs needed to adjust penalty for varying cluster sizes
-    clust.vec <- as.vector(dx[,..cname_])[[1]]
-    vb <- var.est(di = di,
-                  wi = wi,
-                  beta = as.numeric(glmfit$coefficients),
-                  penalty_diag = penalty_diag,
-                  clust.vec = clust.vec,
-                  B = B,
-                  sandwich = sandwich,
-                  exact = FALSE)
-  }
-
-  beta <- glmfit$coefficients
-  penalty_vec <- as.numeric(penalty_diag %*% beta)
-  wi <- Reduce("+", wi)/N_clusters
-  di <- Reduce("+", di)
-  inf_fn <- sanic::solve_chol(a = wi + penalty_diag,
-                              b = di - penalty_vec*N_clusters)
-  beta2 <- glmfit$coefficients <- beta + inf_fn / N_clusters
-  penalty_vec <- as.numeric(penalty_diag %*% beta2)
-  rm(di, wi, dx)
-
-  # --------------------------------------------
-  # update wi and di using one-step estimates
-  # --------------------------------------------
-  ### Robust se
-  dvars <- as.matrix(dr[, X_, with = FALSE])
-  dr[, p := dvars %*% beta2]
-
-  if (family == "binomial") {
-    dr[, p := 1/(1 + exp(-p))]
-    dr[, v := p * (1 - p)]
-  }else if (family == "poisson") {
-    dr[, p := exp(p)]
-    dr[, v := p]
-  }else if (family == "gaussian") {
-    dr[, v:= stats::var( Y - p )]
-  }
-
-  dr[, resid := ( Y - p) / sqrt( v )]
-  dr[, residv := ( Y - p) / v ]
-  namesd <- X_
-
-  ### Re-Estimate correlation parameter
-  if(weighted){
-    rho <- corr.estimate(dr, corr = cov.type,
-                         rho.smooth = rho.smooth,
-                         glmfit = glmfit,
-                         index = index)
-    dr[, index.vec := get(index)]
-    dr <- dr[rho, on = .(index.vec)] # add rho
-    rho_vec <- as.numeric(rho$rho)
-  }else{
-    rho_vec <- rep(0, length(dr$yindex.vec)) # induces working independence structure
-    dr[,rho := 0]
-  }
-
-  # recalculate D and W
-  message("Calculating W2")
-  if(is.null(V.inv)){
-    wi = W.estimate(dx = dr, namesd = namesd,
-                    cname_ = cname_, family = family,
-                    corr = cov.type, dt = TRUE,
-                    index = index)
-  }else{
-    # exact V.inv given
-    dr_list = lapply(clusters, function(i) dr[cname_ == i])
-    wi <- lapply(clusters, function(i)
-      .getW_true(dr_list[[i]],
-                 namesd,
-                 V.inv = V.inv,
-                 rho = NULL,
-                 family = family))
-  }
-  gc()
-  message("Calculating D2")
-
-  if(is.null(V.inv)){
-    di <- D.estimate(dx = dr, namesd = namesd,
-                     cname_ = cname_, family = family,
-                     corr = cov.type, dt = TRUE,
-                     index = index)
-  }else{
-    di <- lapply(clusters, function(i)
-      .getD_true(dr_list[[i]],
-                 namesd,
-                 V.inv = V.inv,
-                 rho = NULL,
-                 family = family))
-    rm(dr_list)
-  }
-  gc()
-
-  # estimate var/cov matrix
-  if(sandwich == "fastBoot" | sandwich == "boot"){ #
-    message("fastBoot update")
-    glmfit$Vp <- vb
-  }else{
-    glmfit$Vp <- vb <- var.est(di = di,
-                               wi = wi,
-                               beta = beta2,
-                               penalty_diag = penalty_diag,
-                               B = B,
-                               sandwich = sandwich,
-                               exact = FALSE)
-  }
-
-  ##############
-  # joint CIs
-  ##############
-  # create matrix to generate smooth terms
-  cov.names <- colnames(glmfit$model)
-  y.nm <- glmfit$formula[[2]] # name of outcome in formula
-  cov.names <- cov.names[!cov.names %in% c(y.nm, "yindex.vec")]
-  terms.mat <- as.data.frame(matrix(1, ncol = length(cov.names), nrow = 1))
-  colnames(terms.mat) <- cov.names
-
-  if(joint.CI != FALSE){
-    # Obtain qn to construct joint CI
-    if(joint.CI != "np"){
-      message("joint CIs: parametric bootstrap")
-      qn <- joint.qn(glmfit = glmfit, NN.sim = 10000)
-    }else{
-      message("joint CIs: non-parametric bootstrap")
-      qn <- joint.basis.np(glmfit = glmfit,
-                     di = di,
-                     wi = wi,
-                     beta = beta2,
-                     penalty_diag = penalty_diag,
-                     bs = bs,
-                     var.mat = glmfit$Vp,
-                     exact = FALSE,
-                     grid.size = 500, # num. of points to eval function on
-                     NN.sim = 10000)
-    }
-  }
-
-  ### Get results
-  result <- list(beta = as.vector(beta2),
-                 vb = vb,
-                 rho = rho_vec,
-                 di = di,
-                 wi = wi,
-                 model = glmfit,
-                 pen.mat = penalty_diag,
-                 lambda = cv.lambda$lambda.star,
-                 grid = data.frame(mse = cv.lambda$mse,
-                                   grid = cv.lambda$grid,
-                                   bias = cv.lambda$bias,
-                                   asy.var = cv.lambda$asy.var),
-                 qn = qn)
-
-  return(result)
-}
-
-# Internal estimation function - exact for linear outcomes
-#
-fun.gee1step.exact <- function(orig.data, dx, formula, family, X_, Y_, namesd, N_clusters, bs,
-                              clusters, glmfit, yindex.vec, cov.type = "exchangeable", parallel = FALSE, sandwich = FALSE,
-                              cv = TRUE, cv.grid, B = 2000, weighted = TRUE,
-                              rho.smooth = FALSE, joint.CI = TRUE, V.inv = NULL,
-                              time = NULL, index = "yindex.vec") {
-
-
-  p <- NULL
-  resid <- NULL
-  wt_ij <- NULL
-  rho_ij <- NULL
-  sum_r <- NULL
-  uss_r <- NULL
-  N <- NULL
-  cname_ <- "cname_"
-  residv <- NULL
-  Y <- NULL
-  yindex.vec <- NULL
-  rho <- NULL
-  time <- NULL
-
-  # if(parallel)  num_cores <- as.integer(round(parallel::detectCores() * 0.85))
-  ###
-
-  dr <- data.table::copy(dx) # for robust se
-  dx[, p := stats::predict.glm(glmfit, type = "response")]
-  dx[, resid := as.numeric(t(resid(glmfit)))  ] # vectorize outcome from original data]
-  dx[, v := stats::var(resid), by = yindex.vec] # this assumes homoscedasticity
-  dx[, resid := NULL]
-  dx[, resid := (Y - p) / sqrt(v) ]
-  namesd <- X_  # just recycle names to avoid copying
-
-  # correlation parameter
-  rho <- corr.estimate(dx, corr = cov.type,
-                       rho.smooth = rho.smooth,
-                       glmfit = glmfit,
-                       index = index)
-  dx[, index.vec := get(index)]
-  dx <- dx[rho, on = .(index.vec)] # add rho
-  rho_vec <- as.numeric(rho$rho[order(rho$index.vec)])
-
-  if(!weighted){
-    rho_vec <- rep(0, length(rho_vec)) # induces working independence structure
-    dx[,rho := 0]
-  }
-  ##########################
-  # consider smoothing rho instead of rho <- drho[, ...] line above (i.e., pointwise averaging)
-  ##########################
-  # get penalties
-  sp_vec <- glmfit["sp"][[1]]
-  penalty_diag <- penalty.construct(model=glmfit, nonSmooths = 0) # nonSmooths set to 0 here
-  if(all(sp_vec==0)){
-    penalty_diag <- matrix(0, ncol = ncol(penalty_diag), nrow = nrow(penalty_diag))
-  }
-
-  ### Estimate beta
-  yindex <- unique(dx$yindex.vec)
-  L <- length(yindex)
-  message("Calculating W1")
-  if(is.null(V.inv)){
-    wi = W.estimate(dx = dx, namesd = namesd,
-                    cname_ = cname_, family = family,
-                    corr = cov.type, dt = TRUE,
-                    index = index)
-  }else{
-    # exact V.inv given
-      dx_list = lapply(clusters, function(i) dx[cname_ == i])
-      wi <- lapply(clusters, function(i)
-                 .getW_true(dx_list[[i]],
-                       namesd,
-                       V.inv = V.inv,
-                       rho = NULL,
-                       family = family))
-  }
-
-  message("Calculating D1")
-  if(is.null(V.inv)){
-    di <- D.estimate(dx = dx, namesd = namesd,
-                           cname_ = cname_, family = family,
-                           corr = cov.type, dt = TRUE,
-                          exact = TRUE, index = index)
-  }else{
-    di <- lapply(clusters, function(i)
-      .getD_true_exact(dx_list[[i]],
-                 namesd,
-                 V.inv = V.inv,
-                 rho = NULL,
-                 family = family))
-    rm(dx_list)
-  }
-
-  #-----------------------------------------
-  ##############
-  # tuning
-  ##############
-  message("Smoothing Parameter Tuning")
-  if(!is.null(cv.grid)){
-    if(is.list(cv.grid)){
-      grid <- cv.grid
-      if(length(cv.grid) > 1){
-        tune.ind <- TRUE
-        # this only needs to be applied to the first one
-      }else{
-        tune.ind <- ifelse(length(grid[[1]]) > 1, TRUE, FALSE) # don't tune if there's only 1 tuning parameter value in the one set
-        if(tune.ind){
-          # if its a list but only one element (one grid) then duplicate for pre-tune
-          grid <- list(grid, grid) # dublicate for pre-tune
-        }
-      }
-    }else{
-      # not a list
-      grid <- list(cv.grid)
-      tune.ind <- ifelse(length(grid[[1]]) > 1, TRUE, FALSE) # don't tune if there's only 1 tuning parameter set
-    }
-
-    # pre-tuning (scale smoothing parameters by same scalar - not expand.grid)
-    if(tune.ind)  grid[[1]] <- do.call(cbind, lapply(glmfit$sp, function(x) x*grid[[1]]))
-
-    if(tune.ind){
-      # if multiple tuning values provided
-      cv.lambda <- fun.gee1step.cv.exact(w = wi,
-                                         d = di,
-                                         namesd = namesd,
-                                         grid,
-                                         data = dx,#orig.data,
-                                         cname_ = "cluster", # may need to update this to be more general
-                                         fit.initial = glmfit,
-                                         cv = cv,
-                                         B = 500,
-                                         seed = 1)
-
-      message("CV Complete")
-      penalty_diag <- penalty.construct(model=glmfit,
-                                        lambda = cv.lambda$lambda.star,
-                                        nonSmooths = 0) # nonSmooths set to 0 here
-    }else{
-      cv.lambda <- data.frame(mse = NA,
-                              lambda.star = grid,
-                              grid = grid,
-                              bias = NA,
-                              asy.var = NA)
-
-      penalty_diag <- penalty.construct(model=glmfit,
-                                        lambda = grid,
-                                        nonSmooths = 0) # nonSmooths set to 0 here
-    }
-  }else{
-    # do no tune
-    message("No penalty")
-    penalty_diag <- penalty.construct(model=glmfit,
-                                      lambda = glmfit$sp * 0,
-                                      nonSmooths = 0)
-    cv.lambda <- NULL
-  }
-
-  # bootstrap
-  if(sandwich %in% c("fastBoot", "boot") ){
-    # estimate var/cov matrix if bootstrap
-    # need to use initial di, wi, beta (not after one-step)
-    # IDs needed to adjust penalty for varying cluster sizes
-    clust.vec <- as.vector(dx[,..cname_])[[1]]
-    vb <- var.est(di = di,
-                  wi = wi,
-                  beta = as.numeric(glmfit$coefficients),
-                  penalty_diag = penalty_diag,
-                  clust.vec = clust.vec,
-                  B = B,
-                  sandwich = sandwich,
-                  exact = TRUE)
-  }
-
-
-  beta2 <- sanic::solve_chol(a = Reduce("+", wi) + penalty_diag,
-                             b = Reduce("+", di))
-  glmfit$coefficients <- beta2
-  rm(di, wi, dx)
-
-  ### Robust se
-  namesd <- X_  # just recycle names to avoid copying
-  dvars <- as.matrix(dr[, X_, with = FALSE])
-  dr[, p := dvars %*% beta2]
-  dr[, v:= stats::var( Y - p )] # gaussian
-  dr[, resid := ( Y - p) / sqrt( v )]
-  dr[, residv := ( Y - p) / v ]
-
-  ### Estimate correlation parameter
-  rho <- corr.estimate(dr, corr = cov.type,
-                       rho.smooth = rho.smooth,
-                       glmfit = glmfit,
-                       index = index)
-  dr[, index.vec := get(index)]
-  dr <- dr[rho, on = .(index.vec)] # add rho
-  rho_vec <- as.numeric(rho$rho)
-  if(!weighted){
-    rho_vec <- rep(0, length(rho_vec)) # induces working independence structure
-    dr[,rho := 0]
-  }
-
-  # recalculate D and W
-  message("Calculating W2")
-  if(is.null(V.inv)){
-    wi = W.estimate(dx = dr, namesd = namesd,
-                    cname_ = cname_, family = family,
-                    corr = cov.type, dt = TRUE)
-  }else{
-    # exact V.inv given
-    dr_list = lapply(clusters, function(i) dr[cname_ == i])
-    wi <- lapply(clusters, function(i)
-                  .getW_true(dr_list[[i]],
-                       namesd,
-                       V.inv = V.inv,
-                       rho = NULL,
-                       family = family))
-  }
-
-  message("Calculating D2")
-  if(is.null(V.inv)){
-    di <- D.estimate(dx = dr, namesd = namesd,
-                     cname_ = cname_, family = family,
-                     corr = cov.type,
-                     dt = TRUE,
-                     exact = FALSE # FALSE b/c sandwich estimator for exact uses same di as One-Step
-                     )
-  }else{
-    message("full D")
-    di <- lapply(clusters, function(i)
-      .getD_true(dr_list[[i]], # Needs this version NOT .getD_true_exact b/c sandwich uses this version
-                 namesd,
-                 V.inv = V.inv,
-                 rho = NULL,
-                 family = family))
-    rm(dr_list)
-  }
-
-  # variance of coefficients
-  # estimate var/cov matrix
-  if(sandwich == "fastBoot" | sandwich == "boot"){ #
-    message("fastBoot update")
-    glmfit$Vp <- vb
-  }else{
-    glmfit$Vp <- vb <- var.est(di = di,
-                               wi = wi,
-                               beta = beta2,
-                               penalty_diag = penalty_diag,
-                               B = B,
-                               sandwich = sandwich,
-                               exact = TRUE)
-  }
-
-  if(joint.CI != FALSE){
-
-    # Obtain qn to construct joint CI
-    if(joint.CI != "np"){
-      message("joint CIs: parametric bootstrap")
-      qn <- joint.qn(glmfit = glmfit, NN.sim = 10000)
-    }else{
-      message("joint CIs: non-parametric bootstrap")
-      qn <- joint.basis.np(glmfit = glmfit,
-                           di = di,
-                           wi = wi,
-                           beta = beta2,
-                           penalty_diag = penalty_diag,
-                           bs = bs,
-                           var.mat = glmfit$Vp,
-                           exact = TRUE,
-                           grid.size = 500, # num. of points to eval function on
-                           NN.sim = 10000)
-    }
-  }else{
-    qn = NULL
-  }
-
-  ### Get results
-  result <- list(beta = as.vector(beta2),
-                 vb = vb,
-                 rho = rho_vec,
-                 di = di,
-                 wi = wi,
-                 model = glmfit,
-                 pen_mat = penalty_diag,
-                 lambda = cv.lambda$lambda.star,
-                 qn = qn,
-                 grid = data.frame(mse = cv.lambda$mse,
-                                   grid = cv.lambda$grid,
-                                   bias = cv.lambda$bias,
-                                   asy.var = cv.lambda$asy.var))
-
-  return(result)
-}
-
-
-# sandwich
-fun.gee1step.sandwich  <- function(orig.data, dx, formula, family, X_, Y_, namesd,
-                                   N_clusters, clusters, glmfit, yindex.vec,
-                                   cov.type = "exchangeable", parallel = FALSE,
-                                   sandwich = FALSE, cv = TRUE, cv.grid, B = 2000,
-                                   rho.smooth = TRUE, joint.CI = TRUE,
-                                   V.inv = NULL, time = NULL, index = "yindex.vec") {
-
-
-  p <- NULL
-  resid <- NULL
-  wt_ij <- NULL
-  rho_ij <- NULL
-  sum_r <- NULL
-  uss_r <- NULL
-  N <- NULL
-  cname_ <- "cname_"
-  v <- NULL
-  residv <- NULL
-  Y <- NULL
-  yindex.vec <- NULL
-  rho <- NULL
-  time <- NULL
-
-  # if(parallel)  num_cores <- as.integer(round(parallel::detectCores() * 0.85))
-  ###
-
-  dr <- data.table::copy(dx) # for robust se
-
-  dx[, p := stats::predict.glm(glmfit, type = "response")]
-
-  if (family == "binomial") {
-    dx[, v := p * (1-p)]
-  }else if (family == "poisson") {
-    dx[, v := p]
-  }else if (family == "gaussian") {
-    dx[, resid := as.numeric(t(resid(glmfit)))  ] # vectorize outcome from original data]
-    dx[, v := stats::var(resid), by = yindex.vec] # this assumes homoscedasticity
-    dx[, resid := NULL]
-  }
-
-  dx[, resid := (Y - p) / sqrt(v) ]
-  namesd <- X_
-
-  # correlation parameter
-  dx[, index.vec := get(index)]
-  dx <- dx[,rho := 0] # fake rho
-  rho_vec <- rep(0, L)
-  print(rho_vec)
-
-  # get penalties
-  sp_vec <- glmfit["sp"][[1]]
-  penalty_diag <- penalty.construct(model=glmfit, nonSmooths = 0) # nonSmooths set to 0 here
-
-  ### Estimate beta
-  yindex <- unique(dx$yindex.vec)
-  L <- length(yindex)
-  message("Calculating W1")
-
-  wi = W.estimate(dx = dx, namesd = namesd,
-                  cname_ = cname_, family = family,
-                  corr = cov.type, dt = TRUE,
-                  index = index)
-
-  gc()
-  message("Calculating D1")
-  di <- D.estimate(dx = dx, namesd = namesd,
-                   cname_ = cname_, family = family,
-                   corr = cov.type, dt = TRUE,
-                   index = index)
-
-
-  gc()
-
-  beta <- glmfit$coefficients
-  glmfit$Vp <- vb <- var.est(di = di,
-                             wi = wi,
-                             beta = beta,
-                             penalty_diag = penalty_diag,
-                             B = B,
-                             sandwich = FALSE,
-                             exact = FALSE)
-
-
-  ##############
-  # joint CIs
-  ##############
-  # create matrix to generate smooth terms
-  cov.names <- colnames(glmfit$model)
-  y.nm <- glmfit$formula[[2]] # name of outcome in formula
-  cov.names <- cov.names[!cov.names %in% c(y.nm, "yindex.vec")]
-  terms.mat <- as.data.frame(matrix(1, ncol = length(cov.names), nrow = 1))
-  colnames(terms.mat) <- cov.names
-
-  if(joint.CI){
-    # Obtain qn to construct joint CI
-    qn <- joint.qn(glmfit = glmfit, NN.sim = 10000)
-  }
-
-  ### Get results
-  result <- list(beta = as.numeric(beta),
-                 vb = vb,
-                 rho = rho_vec,
-                 di = di,
-                 wi = wi,
-                 model = glmfit,
-                 pen.mat = penalty_diag,
-                 lambda = sp_vec,
-                 grid = NULL,
-                 qn = qn)
-
-  return(result)
-}
-
-#' Estimate parameters using one-step algorithm
-#' @importFrom sanic solve_chol
-#' @importFrom Rfast rowMaxs ar1 colMaxs
-#' @import data.table mgcv refund Matrix SuperGauss
-#' @param formula an object of class "formula": a symbolic description of the model to be fitted.
-#' @param data a required data frame or data.table containing the variables in the model.
-#' @param cluster the name of the field that identifies the clusters.
-#' @param family the distribution family: gaussian, binomial, and poisson
-#' @param cov.type working correlation can be "exchangeable", "ar1", or "independence". "ar1" only supported for evenly spaced longitudinal observations (contact package author if you need an implementation for unevenly spaced timepoints!)
-#' @param time variable name for the time variable (necessary only for "ar1").
-#' @param long.dir Logical. Defaults to \code{TRUE}, which models correlation in the longitudinal direction with the specified correlation above (cov.type). \code{TRUE} models correlation along the functional domain with an ar1 structure
-#' @param sandwich Specifies the variance estimator. Set to "fastBoot" for fast cluster bootstrapping, or "boot" for standard cluster bootstrapping.
-#' @param pffr.mod Instead of specifying the formula above, one can instead fit a refund::pffr() model and feed in the model object to provide the initial fit.
-#' @param knots Number of knots used for initial pffr fit. Default to round(L/4) where L is the number of functional domain points.
-#' @param bs Spline basis type used.
-#' @param cv Cross-validation type. Defaults to cluster "fastkfold" but can also use "kfold" for standard cluster CV, or TRUE for hold-one-cluster-out CV.
-#' @param cv.grid A list of vectors, where each vector is a grid to sequentially tune on. Default uses a list of three lists to tune over, which seems to work well in practice.
-#' @param exact Defaults to FALSE. For continuous outcomes, setting `exact=TRUE` uses the closed-form expression (a penalized weighted-least squares) instead of the closely-related one-step estimator.
-#' @param rhoSmooth Defaults to FALSE Determines wheter the pointwise correlation parameter estimates are smoothed across the functional domain.
-#' @param joint.CI Defaults to TRUE which uses a parameteric bootstrap. For a non-parametric bootstrap, set `joint.CI = "np"`.
-#' @param V.inv Defaults to NULL. This is an optional inverse-covariance matrix (of dimension Ln_i x Ln_i) to be used instead of the working correlations above. Experimental feature that assumes fixed sample size across subjects. Contact package authors if you need this feature.
-#' @param return.early Defaults to FALSE. Calculates one-step components and returns them before parameter tuning or one-step update.
-#' @param ... currently disregarded
-#' @references Loewinger, G., Levis, A., Cui, E., Pereira, F. (2025). Fast Functional Generalized Estimating Equations for
-#' Longitudinal Functional Data at Scale.
-#' @return A "fgee1step" object. \code{model} is the updated one-step model object, so mgcv::plot.gam() can be applied to this object. \code{pffr_initial.fit} contains the initial fit refund::pffr object.
-#' \code{vb} contains the variance/covariance matrix for the coefficient estimates (sandwich or bootstrap-based). \code{qn} contains the joint CI quantiles. \code{di} and \code{wi} are lists of length N, with the updated cluster-specific estimating equation and hessian terms (without the penalty).
+#' Fits functional generalized estimating equations (fGEE) for
+#' longitudinal functional outcomes using a one-step estimator,
+#' with optional fully iterated final estimation.
+#'
+#' @param formula A model formula. The left-hand side should be a functional
+#'   response stored as a matrix-like column (typically wrapped in `I()`).
+#' @param data A data frame containing the variables in `formula`.
+#' @param cluster Name of the cluster identifier column.
+#' @param family A family object or family name understood by `refund::pffr()`.
+#' @param corr_fn Working correlation in the functional direction.
+#'   One of `"independent"`, `"exchangeable"`, `"ar1"`, or `"fpca"`.
+#' @param corr_long Working correlation in the longitudinal direction.
+#'   One of `"independent"`, `"exchangeable"`, or `"ar1"`.
+#' @param time Optional name of the longitudinal ordering variable.
+#' @param long.dir Logical; retained for backwards compatibility.
+#' @param var.type Variance estimator. One of `"sandwich"`, `"fastboot"`,
+#'   or `"boot"`. For bootstraping, we recommend "fastboot" over "boot" because it is more thoroughly tested.
+#' @param pffr.mod Optional fitted `refund::pffr()` object to use as the
+#'   initial estimator.
+#' @param knots Number of spline knots for the initial `pffr()` fit.
+#' @param bs Basis type passed to `refund::pffr()`.
+#' @param cv Cross-validation mode used for smoothing parameter selection.
+#' @param cv.grid Optional grid (or staged grids) of smoothing parameters.
+#' @param exact Logical; for Gaussian identity-link models, use the exact
+#'   penalized weighted least-squares update.
+#' @param rho.smooth Logical; smooth pointwise correlation estimates over the
+#'   relevant index when applicable.
+#' @param joint.CI Logical or character controlling joint confidence intervals.
+#' @param gee.fit Logical; if `FALSE`, return uncertainty quantification around
+#'   the initial fit without the GEE update.
+#' @param linpred_method Method used to form linear predictors.
+#' @param clip_mu Lower bound used for numerical stabilization of fitted means.
+#' @param m.pffr Penalty order specification passed to `refund::pffr()`.
+#' @param check_alignment Logical; check alignment between the wide data and the
+#'   `pffr()` long representation.
+#' @param max.iter Maximum number of GEE iterations. `1` gives the one-step fit.
+#' @param tune.method Smoothing-parameter tuning method.
+#' @param boot.samps Number of bootstrap replicates used when applicable.
+#' @param ... Additional arguments reserved for future use.
+#' @return A "fgee1step" object. \code{pffr_initial.fit} contains the initial fit refund::pffr object.
+#' \code{vb} contains the variance/covariance matrix for the coefficient estimates (sandwich or bootstrap-based).
+#' \code{qn} contains the joint CI quantiles. \code{di} and \
+#' \code{wi} are lists of length N, with the updated cluster-specific estimating equation and hessian terms (without the penalty).
 #' @author Gabriel Loewinger \email{gloewinger@@gmail.com}
 #' @examples
+#' \dontrun{
 #' library(fastFGEE)
-#' data("DTI", package = "refund")
-#' set.seed(1)
-#' DTI_use <- DTI[DTI$ID %in% sample(DTI$ID, 45),]
-#' DTI_use <- data.frame(cca = I(DTI_use$cca),
-#'                       case = DTI_use$case, visit = 1*(DTI_use$visit),
-#'                       sex = DTI_use$sex,
-#'                       ID = DTI_use$ID)
-#'  fit_dti <- fastFGEE::fgee(formula = cca ~ case + visit,
-#'                            cluster = "ID",
-#'                            data = DTI_use,
-#'                            family = "gaussian",
-#'                            cov.type = "exchangeable")
-#'  fastFGEE::fgee.plot(fit_dti)
-#'  plot(fit_dti$model)
+#' data("data", package = "fastFGEE")
+#' fit <- fgee(
+#'  formula = Y ~ X1 + X2,
+#'  data = d,
+#'  cluster = "ID",
+#'  family = binomial(link = "logit"),
+#'  time = "time",
+#'  corr_long = "exchangeable",
+#'  corr_fn = "independent")
+#'
+#'  fgee.plot(fit)
+#'  }
+#'
+#' @references Gabriel Loewinger, Alex W. Levis, Erjia Cui, and Francisco Pereira. (2025).
+#' Fast Penalized Generalized Estimating Equations for Large Longitudinal Functional Datasets. \emph{arXiv:2506.20437}.
+#'
 #' @export
 
 fgee <- function(formula, data, cluster, family,
-                         cov.type = "exchangeable",
-                         time = NULL,
-                         long.dir = TRUE,
-                         sandwich = TRUE,
-                         pffr.mod = NULL,
-                         knots = NULL,
-                         bs = "bs",
-                         cv = "fastkfold", cv.grid = NULL,
-                         exact = FALSE, rho.smooth = FALSE,
-                         joint.CI = TRUE, return.early = FALSE,
-                         V.inv = NULL, ...) {
+                 corr_fn = "ar1",
+                 corr_long = "ar1",
+                 time = NULL,
+                 long.dir = TRUE,
+                 var.type = "sandwich",
+                 pffr.mod = NULL,
+                 knots = NULL,
+                 bs = "bs",
+                 cv = "fastkfold",
+                 cv.grid = NULL,
+                 exact = FALSE,
+                 rho.smooth = FALSE,
+                 joint.CI = "wild",
+                 gee.fit = TRUE,
+                 linpred_method = c("accumulate", "matrix"),
+                 clip_mu = 0,
+                 m.pffr = c(2,1),
+                 check_alignment = TRUE,
+                 max.iter = 1,
+                 tune.method = c("one-step", "fully-iterated"),
+                 boot.samps = 3000,
+                 ...) {
 
-  # "declare" vars to avoid global NOTE
-  orig.formula <- formula
-  cname_ <- NULL
-  Y <- NULL
-  N <- NULL
-
-  ### Check arguments
-
-  if( is.null(time) & !long.dir ){
-    stop("If long.dir=FALSE, then you must specify the `time` argument: the variable numbering the longitudinal observation of each functional observation. This can just be the row number of the functional outome matrix for each cluster.")
+  # === Check for duplicate arguments ===
+  call_args <- as.list(match.call())[-1]
+  if (any(duplicated(names(call_args)))) {
+    dupes <- names(call_args)[duplicated(names(call_args))]
+    stop("Duplicate argument(s) in function call: ", paste(unique(dupes), collapse = ", "))
   }
 
-  if ( ! inherits(formula, "formula" ) ) {
-    stop("The argument `formula` is not properly specified")
+  dots <- list(...)
+  if (length(dots) > 0 && !is.null(names(dots))) {
+    formal_args <- names(formals(fgee))
+    formal_args <- formal_args[formal_args != "..."]
+    overlap <- intersect(names(dots), formal_args)
+    if (length(overlap) > 0) {
+      stop("Argument(s) specified both as named parameter and in ...: ",
+           paste(overlap, collapse = ", "))
+    }
   }
 
-  if  (! is.data.frame(data) ) {
-    stop("Data must be a data.frame or data.table")
+  linpred_method <- match.arg(linpred_method)
+
+  if (!inherits(formula, "formula")) stop("`formula` must be a formula.")
+  if (!is.data.frame(data)) stop("`data` must be a data.frame or data.table.")
+  if (!cluster %in% names(data)) stop("cluster variable not found in data: ", cluster)
+
+  if(isFALSE(gee.fit)){
+    # sandwich estimator around initial fit
+    corr_long <- corr_fn <- "independent"
+    exact <- FALSE
   }
 
-  if( ! cov.type %in% c("exchangeable", "ar1", "independence")){
-    stop("cov.type argument must be either 'exchangeable', 'ar1', or 'independence' ")
+  corr_long <- tolower(corr_long)
+  corr_fn   <- tolower(corr_fn)
+  corr_long <- ifelse(corr_long == "independence", "independent", corr_long)
+  corr_fn   <- ifelse(corr_fn   == "independence", "independent", corr_fn)
 
+
+  if ( !corr_long %in% c("exchangeable", "ar1", "independent")) {
+    stop("corr_long must be one of 'exchangeable','ar1','independence'.")
+  }
+  if ( !corr_fn %in% c("exchangeable", "ar1", "independent", "fpca")) {
+    stop("corr_fn must be one of 'exchangeable','ar1','independence', 'fpca'.")
   }
 
-  if ( ! (cluster %in% names(data)) ) {
-    stop(paste("Cluster variable", cluster, "is not in data set"))
+  # Decide which index is used to estimate rho(s)
+  index <- if (isTRUE(long.dir)) "yindex.vec" else "time"
+  if (!isTRUE(long.dir) && is.null(time)) {
+    stop("If long.dir=FALSE, you must provide `time`.")
   }
 
-  Y_nm <- all.vars(formula)[1]
-  L <- ncol(data[, Y_nm])
+  # Initial pffr fit
+  if (is.null(pffr.mod)) {
+    Y_nm <- all.vars(formula)[1]
+    L <- ncol(data[[Y_nm]])
+    if (is.null(knots)) knots <- round(L / 4)
 
-  # fit initial pffr model
-  index <- ifelse(long.dir, "yindex.vec", "time")
-  if(is.null(knots))  knots <- round(L/4)
-  message("Fitting pffr() model")
-  # need to order by cluster, yindex.vec, time in the appropriate order
-  if(is.null(pffr.mod)){
-    fit_pffr <- refund::pffr(formula = formula,
-                             algorithm = "bam",
-                             family = family,
-                             discrete = TRUE,
-                             bs.yindex = list(bs = bs,
-                                              k = knots,
-                                              m = c(2, 1)),
-                             data = data)
-  }else{
+    # Force evaluation of the family argument before passing it to pffr
+    fam <- if (is.character(family)) {
+      match.fun(family)() # If user passes "Gamma", call Gamma()
+    } else {
+      family # If user passes Gamma(link="log"), it's already an object
+    }
+
+    fit_pffr <- refund::pffr(
+      formula = formula,
+      algorithm = "bam",
+      family = fam,
+      discrete = TRUE,
+      bs.yindex = list(bs = bs,
+                       k = knots+1,
+                       m = m.pffr),
+      bs.int = list(bs = bs,
+                    k = knots+1,
+                    m = m.pffr),
+      data = data
+    )
+  } else {
     fit_pffr <- pffr.mod
   }
 
-  if(fit_pffr$family[[1]] != family){
-    stop("Initial pffr fit family does not match family specified in fgee()")
-  }
+  # Build long dt + model matrix columns
+  built <- .fgee_build_long_data(
+    data = data,
+    fit_pffr = fit_pffr,
+    formula = formula,
+    cluster = cluster,
+    time = time,
+    check_alignment = check_alignment
+  )
+  dx <- built$dx
+  X_cols <- built$X_
 
-  yindex.vec <- fit_pffr$model$yindex.vec # functional domain index
-  MM <- suppressWarnings(stats::model.matrix(fit_pffr))
-
-  Y <- fit_pffr$model[,Y_nm]
-  if(ncol(data[,Y_nm]) > 1){
-    Y_len <- rowSums(!is.na(data[,Y_nm])) # find length of functional outcome
-
-    ID <- sapply(1:nrow(data), function(x)
-            rep(data[,cluster][x],
-                each = Y_len[x]) )
-    if(is.list(ID)){
-      ID <- do.call(c, ID)
-    }else{
-      ID <- as.vector(ID)
-    }
-
-
-    if(!is.null(time) & cov.type == "ar1"){
-      time.vec <- sapply(1:nrow(data), function(x)
-        rep(data[,time][x],
-            each = Y_len[x]) )
-      time.vec <- as.vector(time.vec)
-    }
-
-    colnames(data[[Y_nm]]) <- 1:ncol(data[, Y_nm]) # rename columns -- added 3/20/25 to avoid issues with yindex.vec below
-    Y_ <- colnames(data[, Y_nm])
-
-  }else{
-    Y_len <- sum(!is.na(data[,Y_nm])) # find length of functional outcome
-    ID <- as.vector(data[,cluster])
-    time.vec <- as.vector(data[,time])
-    Y_ <- Y_nm
-
-    }
-
-  X_ <- colnames(MM)
-
-  if(length(ID) != length(fit_pffr$model[, Y_nm])){
-    stop("Some rows in dataset are being dropped in pffr() fit, remove these rows first")
-  }
-
-  if(!is.null(time) & cov.type == "ar1"){
-    # prepare time for ar1
-    dt <- data.table(Y = as.numeric(fit_pffr$model[, Y_nm]),
-                       cluster = ID,
-                       yindex.vec = fit_pffr$model$yindex.vec,
-                       time = time.vec,
-                       MM)
-
-    setorder(dt, cluster, time, yindex.vec) # CRITICAL THAT IT IS IN THIS ORDER
-    ID <- as.vector(dt$cluster)
-
-    data <- copy(dt)
-    rm(dt)
-  }
-  else{
-
-    data <- data.table(Y = fit_pffr$model[,Y_nm],
-                       cluster = ID,
-                       yindex.vec = yindex.vec,
-                       MM)
-  }
-
-  if (any(Y_ %in% X_)) {
-    stop(paste("Outcome variable", Y_, "cannot also be a predictor"))
-  }
-
-  if(index == "time")   rho.smooth <- FALSE # cannot smooth since there is only one estimate
-  namesd <- paste0("d.", X_)
-  dx <- copy(data)
-  dx[, cname_ := cluster ]
-
-  formula <- stats::update(formula, Y ~ .)
-
-  clusters <- unique(dx[, cname_])
+  clusters <- unique(dx$cname_)
   N_clusters <- length(clusters)
+
+  if (isTRUE(exact) & fit_pffr$family$family != "gaussian") {
+    message("exact=TRUE only valid for family='gaussian'. Using one-step (exact=FALSE)")
+    exact <- FALSE
+  }
+
 
   if(is.null(cv.grid)){
     cv.grid <- vector(length = 3, "list")
@@ -943,211 +195,661 @@ fgee <- function(formula, data, cluster, family,
                                    10^(-6:4) * 0.5,
                                    10^(-6:4) * 0.75,
                                    10^(-6:4) * 0.9)))
-    cv.grid[[2]] <- c(0, 1e-2, 0.1, 1, 10, 100)
-    cv.grid[[3]] <- c(0, 0.5, 0.75, 1, 1.3, 2, 5)
 
+    cv.grid[[2]] <- c(1e-2, 0.1, 1, 10, 100)
+    cv.grid[[3]] <- c(0.5, 0.75, 1, 1.3, 2, 5)
   }
 
-  if(cov.type == "independence"){
-    # fast work around to induce working-independence structure
-    cov.type <- "exchangeable"
-    weighted <- FALSE
-  }else{
-    weighted <- TRUE
-  }
+  mod.fit <- fun.gee1step.dist_itr(
+    orig.data = dx,
+    dx = dx,
+    formula = formula,
+    # family = family,
+    X_ = X_cols,
+    Y_ = all.vars(formula)[1],
+    namesd = X_cols,
+    N_clusters = N_clusters,
+    clusters = clusters,
+    glmfit = fit_pffr,
+    yindex.vec = dx$yindex.vec,
+    time = time,
+    index = index,
+    bs = bs,
+    corr_fn = corr_fn,
+    corr_long = corr_long,
+    #parallel = parallel,
+    var.type = var.type,
+    cv = cv,
+    cv.grid = cv.grid,
+    rho.smooth = rho.smooth,
+    gee.fit = gee.fit,
+    joint.CI = joint.CI,
+    max.iter = max.iter,
+    tune.method = tune.method,
+    exact = exact,
+    # V.inv = V.inv,
+    linpred_method = linpred_method,
+    clip_mu = clip_mu,
+    boot.samps = boot.samps
+  )
 
-  if(exact){
-    # gaussian exact
-    mod.fit <- fun.gee1step.exact(orig.data=data, dx=dx, formula, family, X_, Y_, namesd,
-                                 N_clusters, clusters = clusters, yindex.vec, bs=bs,
-                                 cov.type = cov.type, glmfit = fit_pffr,
-                                 parallel = parallel, sandwich = sandwich, cv = cv,
-                                 cv.grid = cv.grid, weighted = weighted,
-                                  V.inv = V.inv, time = time, index = index)
-  }else{
-    # one-step
-    mod.fit <- fun.gee1step.dist(orig.data=data, dx=dx, formula, family, X_, Y_, namesd,  bs=bs,
-                                 N_clusters, clusters = clusters, yindex.vec, glmfit = fit_pffr,
-                                 cov.type = cov.type, parallel = parallel, sandwich = sandwich, cv = cv,
-                                 cv.grid = cv.grid, rho.smooth = rho.smooth, weighted = weighted,
-                                 return.early = return.early, joint.CI = joint.CI, V.inv = V.inv, time = time, index = index)
-  }
+  # update mgcv model object
+  MM <- suppressWarnings(stats::model.matrix(fit_pffr))
+  mod.fit <- fgee_model_update(mod.fit = mod.fit, MM = MM)
 
-
-  # update model parameters
-  mod.fit <- model.update(mod.fit = mod.fit, MM = MM)
-
-  result <- append(mod.fit,
-    list(
-      call = match.call(),
-      formula = orig.formula,
-      family = family,
-      outcome = Y_,
-      xnames = X_,
-      model.data = MM,
-      data = data,
-      pffr_initial.fit = fit_pffr,
-      cluster_sizes = as.vector(dx[, .N, keyby = cname_][, N])
-    ))
-  attr(result, "class") <- "fgee1step"
-
-  return(result)
+  result <- append(mod.fit, list(
+    call = match.call(),
+    formula = formula,
+    family = family,
+    outcome = all.vars(formula)[1],
+    xnames = X_cols,
+    data = dx,
+    pffr_initial.fit = fit_pffr,
+    cluster_sizes = as.vector(dx[, .N, keyby = cname_][, N])
+  ))
+  class(result) <- "fgee1step"
+  result
 }
 
 
 
-# Sandwich estimator with working independence
+#' Internal GEE engine used by \code{\link{fgee}}
+#' @keywords internal
+#' @noRd
+fun.gee1step.dist_itr <- function(orig.data, dx, formula, X_, Y_, namesd,
+                                  N_clusters, clusters, glmfit, yindex.vec, bs,
+                                  corr_fn = "independent",
+                                  corr_long = "independent",
+                                  index_fn = "yindex.vec",
+                                  index_long = "time",
+                                  parallel = FALSE,
+                                  var.type = "sandwich",
+                                  cv = "one-step",
+                                  cv.grid,
+                                  boot.samps = 3000,
+                                  rho.smooth = TRUE,
+                                  joint.CI = TRUE,
+                                  time = NULL,
+                                  index = "yindex.vec",
+                                  folds.list = NULL,
+                                  sets = NULL,
+                                  preTn = TRUE,
+                                  linpred_method = c("accumulate", "matrix"),
+                                  clip_mu = 0,
+                                  beta.tol = 1e-6,
+                                  max.iter = 1,
+                                  tune.method = c("one-step", "fully-iterated"),
+                                  tune.full_fn = NULL,
+                                  exact = FALSE,
+                                  gee.fit = TRUE,
+                                  eval_prop = 1) {
 
-#' Estimate parameters using one-step algorithm
-#' @importFrom sanic solve_chol
-#' @importFrom Rfast rowMaxs ar1 colMaxs
-#' @import data.table mgcv refund Matrix SuperGauss MASS
-#' @param formula an object of class "formula": a symbolic description of the model to be fitted.
-#' @param data a required data frame or data.table containing the variables in the model.
-#' @param cluster the name of the field that identifies the clusters.
-#' @param family the distribution family: gaussian, binomial, and poisson
-#' @param ... currently disregarded
-#' @references Lipsitz, S., Fitzmaurice, G., Sinha, D., Hevelone, N., Hu, J.,
-#' & Nguyen, L. L. (2017). One-step generalized estimating equations with large
-#' cluster sizes. Journal of Computational and Graphical Statistics, 26(3), 734-737.
-#' @return a "fgee1step" object
-#' @examples
-#' geefit <- gee1step(y ~ x1 + x2 + x3, data = sampData_binomial,
-#'   cluster = "site", family = "binomial")
-#' geefit
-#'
-#' @export
-fun.sandwich.ind <- function(formula, data, cluster, family, beta.hat = NULL,
-                         algorithm = "bam", knots = NULL, # smooth_method="fREML",
-                         bs = "tp", parallel = FALSE, cov.type = "exchangeable",
-                         # wd = "/Users/loewingergc/Desktop/NIMH Research/functional_GEE/fastFGEE/sources/",
-                         sandwich = FALSE, cv = TRUE, cv.grid, exact = FALSE, weighted = TRUE, rho.smooth = FALSE,
-                          m.pffr = c(2, 1), V.inv = NULL, time = NULL, index = "yindex.vec", ...) {
+  linpred_method <- match.arg(linpred_method)
+  tune.method <- match.arg(tune.method)
 
-  # "declare" vars to avoid global NOTE
-  # source(paste0(wd, "penalty_matrix_construct.R"))
-  # source(paste0(wd, "internals.R"))
-  # suppressPackageStartupMessages(Rcpp::sourceCpp(paste0(wd, "srcRcpp.cpp")))
+  # ---- isolate from caller + canonical order once
+  dx <- data.table::copy(data.table::as.data.table(dx))
+  data.table::setorderv(dx, c("cname_", index_long, index_fn))
+  dr <- data.table::copy(dx)  # final recompute base
 
-  orig.formula <- formula
+  # ------------------------------------------------------------
+  # Exact Gaussian mode flag (minimal integration)
+  #   - only meaningful for Gaussian + identity link
+  #   - IMPORTANT: we DO NOT set exact=TRUE inside .fgee_update_mean_parts(),
+  #     because corr.est must use residuals (Y - mu)/sqrt(v), not Y/sqrt(v).
+  # ------------------------------------------------------------
+  fam_lc  <- tolower(glmfit$family$family)
+  link_lc <- tolower(glmfit$family$link)
+  use_exact_gaussian <- isTRUE(exact) && (fam_lc == "gaussian") && (link_lc == "identity")
 
-  # "declare" vars to avoid global NOTE
+  # ------------------------------------------------------------
+  # Initial estimate (PIVOT beta0)
+  # ------------------------------------------------------------
+  beta0 <- as.numeric(glmfit$coefficients)
+  beta_current <- beta0
 
-  cname_ <- NULL
-  Y <- NULL
-  N <- NULL
-
-  ### Check arguments
-
-  if ( ! inherits(formula, "formula" ) ) {
-    stop("The argument `formula` is not properly specified")
+  # sanity
+  if (!all(X_ %in% names(dx))) stop("Some X_ columns not found in dx.")
+  if (length(beta_current) != length(X_)) {
+    stop("length(beta_current) != length(X_). You likely need to pass the full design column set in X_.\n",
+         "length(beta_current)=", length(beta_current), " length(X_)=", length(X_))
   }
 
-  if  (! is.data.frame(data) ) {
-    stop("Data must be a data.frame or data.table")
+  # ------------------------------------------------------------
+  # Mean/variance/residuals at beta0
+  #   NOTE: exact is intentionally FALSE here even if use_exact_gaussian=TRUE
+  #         so that resid=(Y - p)/sqrtv for corr.est.
+  # ------------------------------------------------------------
+  fi <- get_family_info(glmfit)
+
+  dx <- fgee_update_working_cols_dt(
+    dx = dx,
+    namesd = X_,
+    beta = beta_current,
+    family = glmfit$family,
+    link = glmfit$family$link,
+    exact = FALSE,                  # ALWAYS score residuals for corr.est
+    gaussian_v_by = index_fn,
+    update_nuisance = "fixed",     # use this to start out with mgcv:gam() theta/phi parameter estimates
+    theta = if (fi$family_cpp == "negbinomial") fi$dispersion_cpp else NULL,
+    precision = if (fi$family_cpp == "beta") fi$dispersion_cpp else NULL,
+    clamp_eps = max(1e-8, min(clip_mu, 0.499999)),            # ensure no 0/1 exact issues
+    linpred_method = linpred_method,
+    eta_by = NULL,
+    copy = FALSE
+  )
+  # ------------------------------------------------------------
+  # Correlation (+ FPCA if needed) at beta0
+  # ------------------------------------------------------------
+  cor0 <- corr.est(
+    dx = dx,
+    cname_ = "cname_",
+    index_fn = index_fn,
+    index_long = index_long,
+    corr_fn = corr_fn,
+    corr_long = corr_long,
+    resid_col = "resid",
+    rho.smooth = rho.smooth,
+    ar = "mom",
+    glmfit = if (isTRUE(rho.smooth)) glmfit else NULL,
+    fpca_fn = NULL,
+    copy_dt = FALSE
+  )
+
+  dx <- cor0$dx # cor0$rho$rho_fn$rho_fn <- mean(cor0$rho$rho_fn$rho_fn)
+  # ------------------------------------------------------------
+  # W/D at beta0 (SCORE-based; used for tuning and wild bootstrap pivot)
+  # ------------------------------------------------------------
+  wi0 <- W.estimate(
+    dx,
+    namesd = X_,
+    cname_ = "cname_",
+    corr_fn = corr_fn,
+    corr_long = corr_long,
+    index_fn = index_fn,
+    index_long = index_long,
+    algo = "gschur",
+    fpca_fn = cor0$fpca,
+    id.vec = clusters,
+    copy_dt = FALSE
+  )
+
+  gc()
+
+  di0 <- D.estimate(
+    dx,
+    namesd = X_,
+    cname_ = "cname_",
+    corr_fn = corr_fn,
+    corr_long = corr_long,
+    index_fn = index_fn,
+    index_long = index_long,
+    algo = "gschur",
+    fpca_fn = cor0$fpca,
+    id.vec = clusters,
+    copy_dt = FALSE
+  )
+  gc()
+  # ------------------------------------------------------------
+  # Exact Gaussian RHS at beta0 (ONLY for coefficient updates)
+  #   - does NOT replace di0 (di0 stays score-based)
+  #   - resid_exact = Y/sqrtv is used ONLY inside D.estimate via resid_col
+  # ------------------------------------------------------------
+  di0_exact <- NULL
+  if (use_exact_gaussian) {
+
+    if (!("Y" %in% names(dx))) stop("Exact Gaussian mode requires column 'Y' in dx.")
+
+    # sqrtv should be present because fgee_update_working_cols_dt() writes it,
+    # but make this robust anyway:
+    if (!("sqrtv" %in% names(dx))) {
+      if ("v" %in% names(dx)) {
+        dx[, sqrtv := sqrt(v)]
+      } else {
+        stop("Exact Gaussian mode requires column 'sqrtv' or 'v' in dx. ",
+             "Call fgee_update_working_cols_dt() before forming di_exact.")
+      }
+    }
+
+    dx[, resid_exact := Y / sqrtv]
+
+    di0_exact <- D.estimate(
+      dx,
+      namesd = X_,
+      cname_ = "cname_",
+      corr_fn = corr_fn,
+      corr_long = corr_long,
+      index_fn = index_fn,
+      index_long = index_long,
+      algo = "gschur",
+      fpca_fn = cor0$fpca,
+      id.vec = clusters,
+      copy_dt = FALSE,
+      resid_col = "resid_exact"
+    )
+    gc()
+    dx[, resid_exact := NULL]
   }
 
-  if ( ! (cluster %in% names(data)) ) {
-    stop(paste("Cluster variable", cluster, "is not in data set"))
+  if (isFALSE(gee.fit)) {
+    # only sandwich estimator
+
+    # penalty from pffr()
+    pen_setup <- penalty_setup(glmfit, unpenalized = glmfit$nsdf)
+    sp_vec <- glmfit[["sp"]]
+    if (is.list(sp_vec)) sp_vec <- sp_vec[[1]]
+    sp_vec <- as.numeric(sp_vec)
+    if (length(sp_vec) == 0L) sp_vec <- 0
+    penalty_diag <- penalty_from_setup(pen_setup, lambda = sp_vec)
+
+    vb <- var.est(di = di0, wi = wi0, beta2 = beta0,
+                  wi0 = wi0, di0 = di0, beta0 = beta0,
+                  penalty_diag = penalty_diag,
+                  B = boot.samps,
+                  var.type = var.type,
+                  exact = FALSE,
+                  boot.base = "initial", #c("initial", "final"),
+                  return.boot = FALSE,
+                  seed = NULL,
+                  verbose = FALSE,
+                  block_size = NULL # memory-safe fastboot
+    )
+
+    glmfit$Vp <- vb
+
+    # ------------------------------------------------------------
+    # joint CIs
+    #   - wild: pivot at beta0 using di0/wi0, center at beta2
+    # ------------------------------------------------------------
+    ci_result <- compute_joint_ci(
+      joint.CI = joint.CI,
+      glmfit = glmfit,
+      di0 = di0,
+      wi0 = wi0,
+      di2 = di0,
+      wi2 = wi0,
+      beta0 = beta0,
+      beta2 = beta0,
+      penalty_diag = penalty_diag,
+      bs = bs,
+      index = index,
+      alpha = 0.05,  # Could make this a parameter
+      wild_progress_every = 0,
+      exact = use_exact_gaussian
+    )
+
+    qn <- ci_result$qn
+    glmfit <- ci_result$glmfit
+
+    # ------------------------------------------------------------
+    # return (unchanged fields + iteration info)
+    # ------------------------------------------------------------
+    result <- list(
+      beta = as.vector(beta0),
+      vb = vb,
+      rho = NULL,
+      di0 = di0,
+      wi0 = wi0,
+      di = NULL,
+      wi = NULL,
+      model = glmfit,
+      pen.mat = penalty_diag,
+      lambda = sp_vec,
+      qn = qn,
+      crit = glmfit$crit,
+      ci_newdata = glmfit$ci_newdata,
+      n_iter = 0,
+      converged = NULL,
+      exact = use_exact_gaussian
+    )
+
+    return(result)
   }
 
-  Y_nm <- all.vars(formula)[1]
-  L <- ncol(data[, Y_nm])
+  # ------------------------------------------------------------
+  # Penalty setup and tuning
+  # ------------------------------------------------------------
+  # ------------------------------------------------------------
+  # Tuning (default: one-step tuning using wi0/di0)
+  #   NOTE: For exact Gaussian mode, this still uses SCORE di0.
+  #         You said you will update CV for exact later; this avoids
+  #         changing CV behavior now.
+  # ------------------------------------------------------------
+  tuning_result <- tune_smoothing_parameters(
+    glmfit = glmfit,
+    cv.grid = cv.grid,
+    wi0 = wi0,
+    di0 = di0,
+    di0_exact = di0_exact,
+    use_exact_gaussian = use_exact_gaussian,
+    namesd = namesd,
+    dx = dx,
+    tune.method = tune.method,
+    tune.full_fn = tune.full_fn,
+    folds.list = folds.list,
+    sets = sets,
+    preTn = preTn,
+    corr_fn = corr_fn,
+    corr_long = corr_long,
+    index_fn = index_fn,
+    index_long = index_long,
+    rho.smooth = rho.smooth,
+    X_ = X_,
+    cv = cv,
+    fid_ = index_long,
+    eval_prop = eval_prop
+  )
 
-  if(is.null(knots))  knots <- round(L/4)
-  message("Fitting pffr() model")
-  # need to order by cluster, yindex.vec, time in the appropriate order
-  fit_pffr <- refund::pffr(formula = formula,
-                           algorithm = algorithm,
-                           family = family,
-                           discrete = (algorithm == "bam"),
-                           bs.yindex = list(bs = bs,
-                                            k = knots,
-                                            m = m.pffr),
-                           data = data)
+  penalty_diag <- tuning_result$penalty_diag
+  cv.lambda <- tuning_result$cv.lambda
+  # ------------------------------------------------------------
+  # ITERATIVE penalized GEE update
+  #   max.iter=1 => one-step special case
+  #
+  # Exact Gaussian mode:
+  #   - corr.est uses score residuals as usual
+  #   - beta update uses D_exact = X^T V^{-1} Y (via resid_exact column)
+  # ------------------------------------------------------------
+  coef.diff <- Inf
+  gee.itr <- 0
 
-  if(!is.null(beta.hat)){
-    fit_pffr$coefficients <- beta.hat # use this if feed pre-existing estimates
+  # reuse first-iteration quantities
+  wi_iter <- wi0
+  di_iter <- di0
+  di_exact_iter <- if (use_exact_gaussian) di0_exact else NULL
+  first_iter <- TRUE
+
+  while (coef.diff > beta.tol && gee.itr < max.iter) {
+
+    gee.itr <- gee.itr + 1
+    if (max.iter > 1) message("GEE Iteration ", gee.itr)
+
+    if (!first_iter) {
+
+      dx <- fgee_update_working_cols_dt(
+        dx = dx,
+        namesd = X_,
+        beta = beta_current,
+        family = glmfit$family,
+        link = glmfit$family$link,
+        exact = FALSE,                  # IMPORTANT: score residuals for corr.est
+        gaussian_v_by = index_fn,
+        update_nuisance = "moment",     # or "fixed"
+        theta = attributes(dx)$nuisance$theta,
+        precision = attributes(dx)$nuisance$precision,
+        dispersion =  attributes(dx)$nuisance$dispersion,
+        zi_prob = attributes(dx)$nuisance$zi_prob,
+        clamp_eps = max(1e-8, min(clip_mu, 0.499999)),
+        linpred_method = linpred_method,
+        eta_by = NULL,
+        copy = FALSE
+      )
+
+      cor_iter <- corr.est(
+        dx = dx,
+        cname_ = "cname_",
+        index_fn = index_fn,
+        index_long = index_long,
+        corr_fn = corr_fn,
+        corr_long = corr_long,
+        resid_col = "resid",
+        rho.smooth = rho.smooth,
+        ar = "mom",
+        glmfit = if (isTRUE(rho.smooth)) glmfit else NULL,
+        fpca_fn = NULL,
+        copy_dt = FALSE
+      )
+
+      dx <- cor_iter$dx
+
+      wi_iter <- W.estimate(
+        dx,
+        namesd = X_,
+        cname_ = "cname_",
+        corr_fn = corr_fn,
+        corr_long = corr_long,
+        index_fn = index_fn,
+        index_long = index_long,
+        algo = "gschur",
+        fpca_fn = cor_iter$fpca,
+        id.vec = clusters,
+        copy_dt = FALSE
+      )
+
+      # score-based D (kept for consistency / potential later use)
+      di_iter <- D.estimate(
+        dx,
+        namesd = X_,
+        cname_ = "cname_",
+        corr_fn = corr_fn,
+        corr_long = corr_long,
+        index_fn = index_fn,
+        index_long = index_long,
+        algo = "gschur",
+        fpca_fn = cor_iter$fpca,
+        id.vec = clusters,
+        copy_dt = FALSE
+      )
+
+      # exact RHS D (only if enabled)
+      if (use_exact_gaussian) {
+
+        if (!("sqrtv" %in% names(dx))) {
+          if ("v" %in% names(dx)) {
+            dx[, sqrtv := sqrt(v)]
+          } else {
+            stop("Exact Gaussian mode requires column 'sqrtv' or 'v' in dx. ",
+                 "Call fgee_update_working_cols_dt() before forming di_exact.")
+          }
+        }
+
+        dx[, resid_exact := Y / sqrtv]
+
+        di_exact_iter <- D.estimate(
+          dx,
+          namesd = X_,
+          cname_ = "cname_",
+          corr_fn = corr_fn,
+          corr_long = corr_long,
+          index_fn = index_fn,
+          index_long = index_long,
+          algo = "gschur",
+          fpca_fn = cor_iter$fpca,
+          id.vec = clusters,
+          copy_dt = FALSE,
+          resid_col = "resid_exact"
+        )
+
+        dx[, resid_exact := NULL]
+      }
+
+    }
+
+    first_iter <- FALSE
+
+    wi_bar <- Reduce("+", wi_iter) / N_clusters
+
+    if (use_exact_gaussian) {
+
+      wi_sum <- Reduce("+", wi_iter)
+      di_exact_sum <- Reduce("+", di_exact_iter)
+
+      beta_new <- as.numeric(solve_pd(
+        a = wi_sum + penalty_diag,
+        b = di_exact_sum
+      ))
+
+
+    } else {
+
+      di_sum <- Reduce("+", di_iter)
+      penalty_vec <- as.numeric(penalty_diag %*% beta_current)
+
+      step <- solve_pd(
+        a = wi_bar + penalty_diag,
+        b = di_sum - penalty_vec * N_clusters
+      )
+
+      beta_new <- beta_current + as.numeric(step) / N_clusters
+    }
+
+    coef.diff <- max(abs(beta_new - beta_current))
+    beta_current <- beta_new
+    glmfit$coefficients <- beta_current
+
+    if (max.iter > 1) message("  max|dBeta| = ", signif(coef.diff, 6))
   }
 
-  yindex.vec <- fit_pffr$model$yindex.vec # functional domain index
-  MM <- suppressWarnings(stats::model.matrix(fit_pffr))
-
-  Y <- fit_pffr$model$Y
-  Y_len <- rowSums(!is.na(data[,Y_nm])) # find length of functional outcome
-
-  # ID and time
-  ID <- sapply(1:nrow(data), function(x)
-    rep(data[,cluster][x],
-        each = Y_len[x]) )
-  ID <- as.vector(ID)
-  if(!is.null(time) & cov.type == "ar1"){
-    time.vec <- sapply(1:nrow(data), function(x)
-      rep(data[,time][x],
-          each = Y_len[x]) )
-    time.vec <- as.vector(time.vec)
+  if (max.iter > 1 && gee.itr >= max.iter && coef.diff > beta.tol) {
+    warning("GEE did not converge within max.iter=", max.iter,
+            " (final max|dBeta|=", signif(coef.diff, 6), ").")
   }
 
-  colnames(data[[Y_nm]]) <- 1:ncol(data[, Y_nm]) # rename columns -- added 3/20/25 to avoid issues with yindex.vec below
-  Y_ <- colnames(data[, Y_nm])
-  X_ <- colnames(MM)
+  beta2 <- as.numeric(beta_current)
+  glmfit$coefficients <- beta2
 
-  if(!is.null(time) & cov.type == "ar1"){
+  attributes(dr)$nuisance <- attributes(dx)$nuisance # update nuisance parameters
 
-    dt <- data.table(Y = as.numeric(fit_pffr$model[,Y_nm]),
-                     cluster = ID,
-                     yindex.vec = fit_pffr$model$yindex.vec,
-                     time = time.vec,
-                     MM)
+  # free dx if you want; we use dr for final recompute
+  rm(dx)
 
-    setorder(dt, cluster, time, yindex.vec) # CRITICAL THAT IT IS IN THIS ORDER
-    ID <- as.vector(dt$cluster)
-
-    data <- copy(dt)
-    rm(dt) # time.mat,
-  }
-  else{
-
-    data <- data.table(Y = fit_pffr$model[,Y_nm],
-                       cluster = ID,
-                       yindex.vec = yindex.vec,
-                       MM)
-  }
-
-  if (any(Y_ %in% X_)) {
-    stop(paste("Outcome variable", Y_, "cannot also be a predictor"))
-  }
-
-  if(index == "time")   rho.smooth <- FALSE # cannot smooth since there is only one estimate
-  namesd <- paste0("d.", X_)
-  dx <- copy(data)
-  dx[, cname_ := cluster ]
-
-  formula <- stats::update(formula, Y ~ .)
-
-  clusters <- unique(dx[, cname_])
-  N_clusters <- length(clusters)
-
-  mod.fit <- fun.gee1step.sandwich(orig.data=data, dx=dx, formula, family, X_, Y_, namesd,
-                               N_clusters, clusters = clusters, yindex.vec, glmfit = fit_pffr,
-                               cov.type = "ar1", parallel = parallel, sandwich = sandwich, cv = cv,
-                               cv.grid = cv.grid, rho.smooth = rho.smooth,
-                               V.inv = V.inv, time = time, index = index)
+  # ------------------------------------------------------------
+  # Recompute mean/variance/residuals at final beta (score residuals)
+  # ------------------------------------------------------------
+  dr <- fgee_update_working_cols_dt(
+    dx = dr,
+    namesd = X_,
+    beta = beta2,
+    family = glmfit$family,
+    link = glmfit$family$link,
+    exact = FALSE,                  # core residuals for corr.est (always FALSE for sandiwch)
+    gaussian_v_by = index_fn,
+    update_nuisance = "moment",     # or "fixed"
+    dispersion = attributes(dr)$nuisance$dispersion,
+    theta = attributes(dr)$theta,
+    precision = attributes(dr)$precision,
+    zi_prob = attributes(dr)$zi_prob,
+    clamp_eps = max(1e-8, min(clip_mu, 0.499999)),
+    linpred_method = linpred_method,
+    eta_by = NULL,
+    copy = FALSE
+  )
 
 
-  result <- append(mod.fit,
-    list(
-      call = match.call(),
-      formula = orig.formula,
-      family = family,
-      outcome = Y_,
-      xnames = X_,
-      model.data = MM,
-      data = data,
-      pffr_initial.fit = fit_pffr,
-      cluster_sizes = as.vector(dx[, .N, keyby = cname_][, N])
-    ))
-  attr(result, "class") <- "fgee1step"
+  # ------------------------------------------------------------
+  # Final correlation (+ FPCA) at beta2 (REQUIRED before wi2/di2)
+  # ------------------------------------------------------------
+  cor2 <- corr.est(
+    dx = dr,
+    cname_ = "cname_",
+    index_fn = index_fn,
+    index_long = index_long,
+    corr_fn = corr_fn,
+    corr_long = corr_long,
+    resid_col = "resid",
+    rho.smooth = rho.smooth,
+    ar = "mom",
+    glmfit = if (isTRUE(rho.smooth)) glmfit else NULL,
+    fpca_fn = NULL,
+    copy_dt = FALSE
+  )
+  dr <- cor2$dx
+
+  # ------------------------------------------------------------
+  # Final W/D at beta2 (score-based D for sandwich)
+  # ------------------------------------------------------------
+  wi2 <- W.estimate(
+    dr,
+    namesd = X_,
+    cname_ = "cname_",
+    corr_fn = corr_fn,
+    corr_long = corr_long,
+    index_fn = index_fn,
+    index_long = index_long,
+    algo = "gschur",
+    fpca_fn = cor2$fpca,
+    id.vec = clusters,
+    copy_dt = FALSE
+  )
+  gc()
+  # for sandwich variance estimator, do not use exact D even when exact = TRUE
+  di2 <- D.estimate(
+    dr,
+    namesd = X_,
+    cname_ = "cname_",
+    corr_fn = corr_fn,
+    corr_long = corr_long,
+    index_fn = index_fn,
+    index_long = index_long,
+    algo = "gschur",
+    fpca_fn = cor2$fpca,
+    id.vec = clusters,
+    copy_dt = FALSE
+  )
+  gc()
+  # ------------------------------------------------------------
+  # Variance estimator (uses di2/wi2)
+  # ------------------------------------------------------------
+  vb <- var.est(di = di2, wi = wi2, beta2 = beta2,
+                wi0 = wi0, di0 = di0, beta0 = beta0,
+                penalty_diag = penalty_diag,
+                B = boot.samps,
+                var.type = var.type,
+                exact = exact,
+                boot.base = "initial", #c("initial", "final"),
+                return.boot = FALSE,
+                seed = NULL,
+                verbose = FALSE,
+                block_size = NULL # memory-safe fastboot
+  )
+
+  glmfit$Vp <- vb
+
+  # ------------------------------------------------------------
+  # joint CIs
+  #   - wild: pivot at beta0 using di0/wi0, center at beta2
+  # ------------------------------------------------------------
+  ci_result <- compute_joint_ci(
+    joint.CI = joint.CI,
+    glmfit = glmfit,
+    di0 = di0,
+    wi0 = wi0,
+    di2 = di2,
+    wi2 = wi2,
+    beta0 = beta0,
+    beta2 = beta2,
+    penalty_diag = penalty_diag,
+    bs = bs,
+    index = index,
+    alpha = 0.05,  # Could make this a parameter
+    wild_progress_every = 0,
+    exact = use_exact_gaussian
+  )
+
+  qn <- ci_result$qn
+  glmfit <- ci_result$glmfit
+
+  # ------------------------------------------------------------
+  # return (unchanged fields + iteration info)
+  # ------------------------------------------------------------
+  result <- list(
+    beta = as.vector(beta2),
+    vb = vb,
+    rho = cor2$rho,
+    di0 = di0,
+    wi0 = wi0,
+    di = di2,
+    wi = wi2,
+    model = glmfit,
+    pen.mat = penalty_diag,
+    lambda = if (!is.null(cv.lambda)) cv.lambda$lambda.star else NULL,
+    qn = qn,
+    crit = glmfit$crit,
+    ci_newdata = glmfit$ci_newdata,
+    n_iter = gee.itr,
+    converged = (max.iter == 1L) || (coef.diff <= beta.tol),
+    exact = use_exact_gaussian
+  )
 
   return(result)
 }
