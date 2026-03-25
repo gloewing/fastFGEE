@@ -5,8 +5,7 @@
 `fastFGEE` fits fast one-step functional generalized estimating equations (fGEE)
 for longitudinal functional outcomes. The package uses a `refund::pffr()` initial
 fit and then updates the coefficient estimate with a working correlation structure
-in the longitudinal and/or functional direction. See the package
-[vignette](https://rpubs.com/gloewinger/1413634) for a user guide.
+in the longitudinal and/or functional direction. 
 
 ## Main features
 
@@ -27,6 +26,7 @@ in the longitudinal and/or functional direction. See the package
 remotes::install_github("gloewing/fastFGEE")
 ```
 
+See the package [vignette](https://rpubs.com/gloewinger/1413634) for a user guide.
 
 ### Optional accelerator
 
