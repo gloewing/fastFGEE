@@ -5,7 +5,15 @@ Authors@R:
     person("Gabriel", "Loewinger", email = "gloewinger@gmail.com",
            role = c("aut", "cre"),
            comment = c(ORCID = "0000-0002-0755-8520"))
-Description: Fits functional generalized estimating equations (fGEE) for longitudinal functional outcomes and covariates using a one-step estimator that is fast even for large cluster sizes or large numbers of clusters. The package supports quasi-likelihoods derived from a range of families, common link functions, and many working correlation structures. Uncertainty quantification is based on a sandwich variance estimator that yields valid inference even when the working correlation is misspecified.
+Description: Fits functional generalized estimating equations for longitudinal
+    functional outcomes and covariates using a one-step estimator that is fast
+    even for large cluster sizes or large numbers of clusters. The package
+    supports quasi-likelihoods derived from a range of families, common link
+    functions, and several working correlation structures. Uncertainty
+    quantification is based on a sandwich variance estimator that remains valid
+    even when the working correlation is incorrectly specified. For irregularly
+    spaced AR(1) precision matrices, the package can optionally use the
+    archived package 'irregulAR1' when it is installed from the CRAN Archive.
 License: GPL (>= 3)
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
