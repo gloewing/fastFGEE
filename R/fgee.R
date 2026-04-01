@@ -43,9 +43,9 @@
 #' \code{wi} are lists of length N, with the updated cluster-specific estimating equation and hessian terms (without the penalty).
 #' @author Gabriel Loewinger \email{gloewinger@@gmail.com}
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' library(fastFGEE)
-#' data("data", package = "fastFGEE")
+#' data("d", package = "fastFGEE")
 #' fit <- fgee(
 #'  formula = Y ~ X1 + X2,
 #'  data = d,

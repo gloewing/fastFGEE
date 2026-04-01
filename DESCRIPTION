@@ -10,10 +10,12 @@ Description: Fits functional generalized estimating equations for longitudinal
     even for large cluster sizes or large numbers of clusters. The package
     supports quasi-likelihoods derived from a range of families, common link
     functions, and several working correlation structures. Uncertainty
-    quantification is based on a sandwich variance estimator that remains valid
-    even when the working correlation is incorrectly specified. For irregularly
-    spaced AR(1) precision matrices, the package can optionally use the
-    archived package 'irregulAR1' when it is installed from the CRAN Archive.
+    quantification is based on sandwich variance estimators and bootstrap
+    procedures that remain valid even when the working correlation is
+    incorrectly specified. The package provides an implementation of the 
+    method described in Loewinger et al. (2025) <https://pmc.ncbi.nlm.nih.gov/articles/PMC12306803/>. For irregularly spaced AR(1) precision matrices, the package can optionally use 
+    the archived package 'irregulAR1'; if needed, it can be obtained from the CRAN
+    Archive at <https://cran.r-project.org/src/contrib/Archive/irregulAR1/>.
 License: GPL (>= 3)
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)

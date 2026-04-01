@@ -857,10 +857,15 @@ W.estimate <- function(dx,
 
   bad <- which(vapply(wi, function(M) any(!is.finite(M)), logical(1)))
   if (length(bad) > 0) {
+    extra <- ""
     if (!is.null(id.vec) && length(id.vec) >= max(bad)) {
-      print(paste("These clusters/IDs yield errors (please remove):", paste(id.vec[bad], collapse = ",")))
+      extra <- paste0(" Problematic cluster IDs: ", paste(id.vec[bad], collapse = ", "), ".")
     }
-    stop("W.estimate returned non-finite values for some clusters.")
+    stop(
+      "W.estimate returned non-finite values for some clusters.",
+      extra,
+      call. = FALSE
+    )
   }
 
   attr(wi, "algo") <- algo
@@ -919,10 +924,15 @@ D.estimate <- function(dx,
 
   bad <- which(vapply(di, function(v) any(!is.finite(v)), logical(1)))
   if (length(bad) > 0) {
+    extra <- ""
     if (!is.null(id.vec) && length(id.vec) >= max(bad)) {
-      print(paste("These clusters/IDs yield errors (please remove):", paste(id.vec[bad], collapse = ",")))
+      extra <- paste0(" Problematic cluster IDs: ", paste(id.vec[bad], collapse = ", "), ".")
     }
-    stop("D.estimate returned non-finite values for some clusters.")
+    stop(
+      "D.estimate returned non-finite values for some clusters.",
+      extra,
+      call. = FALSE
+    )
   }
 
   attr(di, "algo") <- algo
