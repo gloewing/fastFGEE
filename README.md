@@ -25,7 +25,6 @@ in the longitudinal and/or functional direction.
 ```r
 install.packages("fastFGEE")
 ```
-
 ### Development version
 
 ```r
