@@ -20,6 +20,12 @@ in the longitudinal and/or functional direction.
 
 ## Installation
 
+### Github version
+
+```r
+install.packages("fastFGEE")
+```
+
 ### Development version
 
 ```r
