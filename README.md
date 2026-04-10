@@ -1,5 +1,6 @@
 
 ```markdown
+
 # fastFGEE
 
 `fastFGEE` fits fast one-step functional generalized estimating equations (fGEE)
