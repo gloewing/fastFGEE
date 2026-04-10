@@ -1,6 +1,3 @@
-
-```markdown
-
 # fastFGEE
 
 `fastFGEE` fits fast one-step functional generalized estimating equations (fGEE)
@@ -88,4 +85,3 @@ fgee.plot(fit)
 
 Portions of the package were developed with assistance from large language
 models. All code was reviewed and validated by the package author.
-```
