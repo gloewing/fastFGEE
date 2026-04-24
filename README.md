@@ -18,7 +18,7 @@ in the longitudinal and/or functional direction.
 
 ## Installation
 
-### Github version
+### CRAN version
 
 ```r
 install.packages("fastFGEE")
