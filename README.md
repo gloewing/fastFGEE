@@ -18,38 +18,32 @@ in the longitudinal and/or functional direction. See the [vignette](https://rpub
 
 ## Installation
 
+### From r-universe (recommended -- no compiler needed)
+
+```r
+install.packages("fastFGEE", repos = c(
+  gloewing = "https://gloewing.r-universe.dev",
+  CRAN     = "https://cloud.r-project.org"
+))
+```
+
+This installs a prebuilt binary on Windows and macOS, so no development tools
+are required.
+
 ### CRAN version
 
 ```r
 install.packages("fastFGEE")
 ```
-### Development version
+
+### Development version from source
+
+`fastFGEE` contains compiled C++ code, so installing from source requires a
+toolchain: **Rtools** on Windows, **Xcode Command Line Tools** on macOS
+(`xcode-select --install`), or `build-essential` on Linux.
 
 ```r
 remotes::install_github("gloewing/fastFGEE")
-```
-
-
-### Optional accelerator
-
-The package works without `sanic`, but matrix solves can be faster when it is
-installed:
-
-```r
-install.packages("sanic")
-```
-
-### Optional archived package for irregular AR(1) work
-
-If you choose to support archived `irregulAR1`-based workflows outside CRAN,
-install it manually from the CRAN archive:
-
-```r
-install.packages(
-  "https://cran.r-project.org/src/contrib/Archive/irregulAR1/irregulAR1_1.0.0.tar.gz",
-  repos = NULL,
-  type = "source"
-)
 ```
 
 ## Example
