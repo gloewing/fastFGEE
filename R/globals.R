@@ -2,6 +2,7 @@ if (getRversion() >= "2.15.1") {
   utils::globalVariables(c(
     ".",
     ".N",
+    ".I",
     ".SD",
     ".SDcols",
     ".cid",
@@ -58,3 +59,6 @@ if (getRversion() >= "2.15.1") {
     "resid_exact"
   ))
 }
+
+# Internal null-coalescing helper.
+.fgee_or <- function(x, y) if (is.null(x)) y else x

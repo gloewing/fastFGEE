@@ -1,7 +1,9 @@
 #' Plot coefficient estimates from a fitted `fastFGEE` model
 #'
-#' Produces coefficient plots with pointwise and joint confidence intervals
-#' when available.
+#' Produces coefficient plots with pointwise intervals and optional simultaneous
+#' confidence bands when available. A displayed simultaneous band represents the
+#' fitted procedure's whole-curve calibration; it is not a guarantee of nominal
+#' finite-sample simultaneous coverage, especially with few independent clusters.
 #'
 #' @param fit A fitted object returned by \code{\link{fgee}}.
 #' @param num_row Number of rows used when arranging plots.

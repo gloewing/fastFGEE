@@ -101,11 +101,6 @@ fun.gee1step.cv <- function(w, d, grid, data,
     fid_vec <- data[[fid_]]
   }
 
-  # solver helper
-  # .solve_chol <- function(a, b) {
-  #   if (requireNamespace("sanic", quietly = TRUE)) sanic::solve_chol(a = a, b = b) else solve(a, b)
-  # }
-
   # ---- Exact Gaussian guard + choose which d to use ----
   if (exact) {
     if (!(tolower(fit.initial$family$family) == "gaussian" && link.fn == "identity")) {
@@ -863,6 +858,7 @@ fullyItr.cv <- function(w,
                         index_fn = "yindex.vec",
                         index_long = "time",
                         rho.smooth = FALSE,
+                        rho.pool = c("fn", "none", "long", "both"),
                         ar = c("mom", "yw"),
                         clamp = 0.999,
                         # CV controls
@@ -1237,6 +1233,7 @@ fullyItr.cv <- function(w,
         corr_long = corr_long,
         resid_col = "resid",
         rho.smooth = rho.smooth,
+        rho.pool = rho.pool,
         ar = ar,
         glmfit = if (isTRUE(rho.smooth)) fit.initial else NULL,
         fpca_fn = NULL,
@@ -1492,6 +1489,7 @@ tune_smoothing_parameters <- function(
     index_fn = "yindex.vec",
     index_long = "time",
     rho.smooth = TRUE,
+    rho.pool = c("fn", "none", "long", "both"),
     X_ = NULL,
     cv = TRUE,
     eval_prop = 1,
@@ -1602,6 +1600,7 @@ tune_smoothing_parameters <- function(
           index_fn = index_fn,
           index_long = index_long,
           rho.smooth = rho.smooth,
+          rho.pool = rho.pool,
           sets = sets,
           folds.list = folds.list
         )

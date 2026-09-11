@@ -37,3 +37,7 @@
 ^Vignette/fastFGEE\.pdf$
 ^\.git$
 ^sources$
+^DEVELOPMENT\.md$
+^Rplots\.pdf$
+^tests/testthat/Rplots\.pdf$
+^validation$

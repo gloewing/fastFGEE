@@ -224,7 +224,7 @@
 
     if (corr == "exchangeable") {
       acf <- c(1, rep(rho, n - 1))
-      Toep <- SuperGauss::Toeplitz$new(N = n, acf = acf)
+      Toep <- .fgee_supergauss_toeplitz(N = n, acf = acf)
       out <- Toep$solve(Mrhs, method = algo, tol = tol)
       return(if (was_vec) as.vector(out) else out)
     }
@@ -238,15 +238,11 @@
 
     if (is_regular) {
       acf <- rho^(0:(n - 1))
-      Toep <- SuperGauss::Toeplitz$new(N = n, acf = acf)
+      Toep <- .fgee_supergauss_toeplitz(N = n, acf = acf)
       out <- Toep$solve(Mrhs, method = algo, tol = tol)
       return(if (was_vec) as.vector(out) else out)
     } else {
-      if (!requireNamespace("irregulAR1", quietly = TRUE)) {
-        stop("Package 'irregulAR1' required for grid_type='irregular'.")
-      }
-      Q <- (1 / (1 - rho^2)) * irregulAR1::ar1_prec_irregular(sigma = 1, times = times, rho = rho)
-      out <- as.matrix(Q %*% Mrhs)
+      out <- fgee_iar1_apply_precision(Mrhs, time = times, rho = rho)
       return(if (was_vec) as.vector(out) else out)
     }
   }
@@ -618,7 +614,7 @@
 
     if (corr == "exchangeable") {
       acf <- c(1, rep(rho, n - 1))
-      Toep <- SuperGauss::Toeplitz$new(N = n, acf = acf)
+      Toep <- .fgee_supergauss_toeplitz(N = n, acf = acf)
       out <- Toep$solve(Mrhs, method = algo, tol = tol)
       return(if (was_vec) as.vector(out) else out)
     }
@@ -632,15 +628,11 @@
 
     if (is_regular) {
       acf <- rho^(0:(n - 1))
-      Toep <- SuperGauss::Toeplitz$new(N = n, acf = acf)
+      Toep <- .fgee_supergauss_toeplitz(N = n, acf = acf)
       out <- Toep$solve(Mrhs, method = algo, tol = tol)
       return(if (was_vec) as.vector(out) else out)
     } else {
-      if (!requireNamespace("irregulAR1", quietly = TRUE)) {
-        stop("Package 'irregulAR1' required for grid_type='irregular'.")
-      }
-      Q <- (1 / (1 - rho^2)) * irregulAR1::ar1_prec_irregular(sigma = 1, times = times, rho = rho)
-      out <- as.matrix(Q %*% Mrhs)
+      out <- fgee_iar1_apply_precision(Mrhs, time = times, rho = rho)
       return(if (was_vec) as.vector(out) else out)
     }
   }

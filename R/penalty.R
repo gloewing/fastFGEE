@@ -82,3 +82,60 @@ penalty_from_setup <- function(setup, lambda) {
 
   P
 }
+
+# Penalty component matrices aligned with the supplied lambda vector ----------
+#' @keywords internal
+#' @noRd
+penalty_components_from_setup <- function(setup, lambda_length) {
+  q <- as.integer(lambda_length)[1L]
+  if (!is.finite(q) || q < 1L) stop("lambda_length must be a positive integer.")
+
+  p <- setup$p
+  n_sm <- setup$n_sm
+  n_pen <- setup$n_pen
+  comps <- setup$comps
+
+  make_full <- function(ind, S) {
+    out <- matrix(0, p, p)
+    out[ind, ind] <- S
+    if (!is.null(setup$unpenalized) && setup$unpenalized > 0L) {
+      out[seq_len(setup$unpenalized), ] <- 0
+      out[, seq_len(setup$unpenalized)] <- 0
+    }
+    out
+  }
+
+  if (q == 1L) {
+    S <- Reduce(`+`, lapply(comps, function(z) make_full(z$ind, z$S)),
+                init = matrix(0, p, p))
+    return(list(S = list(S), lambda_mode = "scalar"))
+  }
+
+  if (q == n_sm) {
+    S <- vector("list", n_sm)
+    for (j in seq_len(n_sm)) S[[j]] <- matrix(0, p, p)
+    for (z in comps) {
+      S[[z$smooth]][z$ind, z$ind] <-
+        S[[z$smooth]][z$ind, z$ind] + z$S
+    }
+    if (!is.null(setup$unpenalized) && setup$unpenalized > 0L) {
+      ii <- seq_len(setup$unpenalized)
+      S <- lapply(S, function(M) {
+        M[ii, ] <- 0
+        M[, ii] <- 0
+        M
+      })
+    }
+    return(list(S = S, lambda_mode = "smooth"))
+  }
+
+  if (q == n_pen) {
+    S <- lapply(comps, function(z) make_full(z$ind, z$S))
+    return(list(S = S, lambda_mode = "penalty"))
+  }
+
+  stop(
+    "lambda_length must be 1, #smooths=", n_sm,
+    ", or #penalties=", n_pen, "; got ", q, "."
+  )
+}

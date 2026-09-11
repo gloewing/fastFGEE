@@ -1,22 +1,36 @@
 #' fastFGEE: Fast Functional Generalized Estimating Equations
 #'
-#' Fits functional generalized estimating equations (fGEE) for
-#' longitudinal functional outcomes using a one-step estimator.
+#' Fits functional generalized estimating equations (fGEE) for longitudinal
+#' functional outcomes using the validated one-step estimator.
 #'
-#' The main user-facing functions are \code{\link{fgee}} and \code{\link{fgee.plot}}.
+#' The main user-facing functions are [fgee()] and [fgee.plot()].
 #'
-#' @section Optional packages:
-#' \itemize{
-#'   \item \code{sanic} is used when available for faster positive-definite solves.
-#'   \item \code{irregulAR1} is used only for irregularly spaced AR1 precision matrices.
-#'   \item \code{Rcpp} and \code{RcppArmadillo} are used only for developer-side experimental
-#'   C++ loss code and are not required for the minimal CRAN build.
-#' }
+#' @section Numerical backends:
+#' The package directly imports Rcpp and links its registered compiled routines.
+#' Internal LAPACK Cholesky routines are used for symmetric positive-definite
+#' solves. Exact tridiagonal Markov precision operations for irregularly sampled
+#' continuous-time AR(1) working correlations are implemented within fastFGEE
+#' from the formulas of Allevius (2018); no code from the archived
+#' `irregulAR1` package is used. `SuperGauss` remains an optional backend for
+#' explicitly requested regular-grid Toeplitz calculations. `RcppArmadillo` is
+#' retained only for historical developer-side experimental CV helpers.
+#'
+#' @section Inference scope:
+#' Pointwise intervals and optional simultaneous bands answer different
+#' inferential questions. A requested simultaneous band uses a whole-curve
+#' maximum statistic, but nominal finite-sample simultaneous coverage is not
+#' guaranteed, particularly with few or high-leverage independent clusters.
 #'
 #' @section AI-assisted development:
 #' Portions of the package were developed with assistance from large language
-#' models. All code was reviewed, tested, and edited by the human author(s),
-#' who take responsibility for the package.
+#' models. All code remains the responsibility of the human author(s).
+#'
+#' @references
+#' Allevius, B. (2018). On the precision matrix of an irregularly sampled AR(1)
+#' process. *Stockholm University Research Report*.
+#'
+#' Loewinger, G., Levis, A. W., Cui, E., and Pereira, F. (2025). Fast Penalized
+#' Generalized Estimating Equations for Large Longitudinal Functional Datasets.
 #'
 #' @keywords internal
 #' @import data.table
@@ -24,6 +38,7 @@
 #'   geom_line geom_ribbon geom_segment ggplot labs
 #'   scale_colour_manual theme theme_classic
 #' @importFrom mgcv s
+#' @importFrom Rcpp evalCpp
 #' @importFrom stats na.omit
 "_PACKAGE"
 

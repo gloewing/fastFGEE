@@ -23,60 +23,59 @@ knitr::opts_chunk$set(collapse = TRUE, comment = "#>", warning = FALSE, message 
 library(fastFGEE)
 ```
 
+## Numerical dependencies
+
+The default correlation solver handles regular-grid AR(1) and exchangeable
+working correlation directly. `SuperGauss` is suggested rather than required
+and is used only when `corr.solver = "supergauss"` is requested explicitly:
+
+```{r, eval = FALSE}
+install.packages("SuperGauss")
+```
+
+Irregularly sampled continuous-time AR(1) correlations use an exact
+tridiagonal Markov precision implemented inside `fastFGEE` from the formulas of
+Allevius (2018). Symmetric positive-definite coefficient-space solves use
+registered Rcpp/LAPACK routines. The archived `irregulAR1` and `sanic` packages
+are no longer dependencies.
+
 # Introduction
 
-`fastFGEE` fits functional generalized estimating equations (fGEE) for longitudinal functional outcomes.
-The typical workflow is:
+`fastFGEE` fits functional generalized estimating equations for longitudinal
+functional outcomes. The public workflow is:
 
-1. fit an initial function-on-scalar regression with `refund::pffr()`,
-2. choose smoothing parameters with cluster cross-validation, and
-3. optionally update the initial fit with one or more fGEE iterations.
+1. fit or accept an initial function-on-scalar regression from `refund::pffr()`,
+2. estimate a working correlation from the initial residuals,
+3. choose smoothing parameters by fast cluster cross-validation, and
+4. perform one penalized fGEE update followed by robust inference.
 
-The current interface uses separate arguments for the longitudinal and functional working correlations:
+The public interface exposes only the validated one-step estimator. Historical
+exact-GLS, pffr-only, legacy-engine, and fully iterated implementations remain
+unexported for regression testing and future method development. Arguments such
+as `exact`, `gee.fit`, `max.iter`, `tune.method`, and `working.engine` are not
+accepted by `fgee()`.
 
-- `corr_long` controls the correlation structure across repeated observations within cluster,
-- `corr_fn` controls the correlation structure along the functional domain.
-
-This replaces the older single-argument `cov.type` interface used in the original vignette.
-Likewise, the old `sandwich` argument is now replaced by `var.type`.
-
-A useful way to think about the main fitting options is:
-
-- `max.iter = 1`: one-step fGEE,
-- `max.iter > 1`: fully-iterated final fit,
-- `gee.fit = FALSE`: do **not** perform the GEE update; instead, keep the initial `pffr()` fit and compute robust inference for that fit.
-
-For most users, `max.iter = 1` is the default fast estimator, while `max.iter = 100` is a practical way to approximate a fully-iterated fGEE fit.
+The working-correlation directions are specified separately: `corr_long` acts
+across repeated observations within a cluster and `corr_fn` acts along the
+functional domain. The older `cov.type` interface is replaced by these two
+arguments, and the older `sandwich` argument is replaced by `var.type`.
 
 # Loading example data
 
-The source package currently includes a simulated example file named `binary_ar1_data`.
-A robust way to locate it is:
+The package includes a simulated longitudinal functional dataset named `d`.
+The response is stored as an `AsIs` matrix column on a common functional grid:
 
 ```{r, eval = FALSE}
-dat_path <- system.file("data", "binary_ar1_data", package = "fastFGEE")
-if (dat_path == "") {
-  dat_path <- "binary_ar1_data"
-}
-dat0 <- readRDS(dat_path)
-```
-
-The outcome is stored as a matrix inside a data frame column. A standard wide-format data object for `fgee()` looks like this:
-
-```{r, eval = FALSE}
-dat <- data.frame(
-  Y = I(dat0$Y),
-  X1 = dat0$X1,
-  X2 = dat0$X2,
-  ID = dat0$ID,
-  time = dat0$time
-)
+data("d", package = "fastFGEE")
+dat <- d
 
 head(as.matrix(dat$Y)[, 1:4])
 head(dat[c("ID", "X1", "X2", "time")])
 ```
 
-Here each row corresponds to one longitudinal observation, and `Y` is the functional outcome observed on a grid of length `L`.
+Each row is one longitudinal observation. `ID` identifies the independent
+cluster, `time` orders repeated observations, and `Y` contains the functional
+outcome evaluated on its grid.
 
 # A basic one-step fit
 
@@ -93,7 +92,6 @@ fit_1step <- fgee(
   corr_long = "ar1",
   corr_fn = "independence",
   rho.smooth = TRUE,
-  max.iter = 1,
   cv = "fastkfold",
   joint.CI = "wild",
   var.type = "sandwich"
@@ -104,12 +102,11 @@ fgee.plot(fit_1step)
 
 The plotting method uses the fitted confidence intervals returned by `fgee()` and produces coefficient-function plots for the intercept and covariate effects.
 
-# One-step, fully-iterated, and pffr-only fits
+# The supported one-step fit
 
-## One-step fGEE
-
-A one-step fit is obtained with `max.iter = 1`.
-This is the main fast estimator described in the paper.
+Every public `fgee()` call performs one coefficient update. This is the fast
+estimator described in the paper. There is no user switch between one-step,
+exact, pffr-only, or fully iterated estimators in this development version.
 
 ```{r, eval = FALSE}
 fit_1step <- fgee(
@@ -120,106 +117,233 @@ fit_1step <- fgee(
   time = "time",
   corr_long = "ar1",
   corr_fn = "ar1",
-  max.iter = 1,
   cv = "fastkfold",
   joint.CI = "wild",
   var.type = "sandwich"
 )
 ```
 
-## Fully-iterated final fit
+A pre-fitted `refund::pffr()` model can still be supplied through `pffr.mod`;
+that changes only the initial estimator, not the one-step nature of the public
+fit. Internal historical paths are retained so package tests can continue to
+compare the optimized engine with the original implementation.
 
-To iterate the estimating equation update beyond one step, increase `max.iter`.
-In the next example the smoothing parameters are still tuned using the default fast one-step tuning, but the final coefficient estimate is iterated until convergence or until the iteration cap is reached.
+# Smoothing-parameter selection
+
+By default, and for every fastK selector, `fgee()` chooses smoothing parameters
+by minimising the exact fast $K$-fold cross-validation criterion. The
+`sp.method` argument selects the search strategy. `"sandwich_qreml"` is a
+separate explicit opt-in working restricted quasi-likelihood criterion rather
+than a cross-validation method; `"auto"` does not select it.
+
+## What `"auto"` does
+
+For Gaussian identity-link models, `"auto"` uses `"fastk_staged"`. The exact
+held-out Gaussian loss can be written in terms of per-fold coefficient-space
+sufficient statistics, so once those are built the objective no longer depends
+on the number of functional observations. Tuning takes about the same time
+whether the data have $10^5$ or $2 \times 10^7$ scalar observations.
+
+For supported non-Gaussian families -- binomial with a logit link, Poisson,
+Gamma and negative binomial with a log link, and beta regression with a logit
+link -- `"auto"` uses `"fastk_grad_fast"`. There is no finite
+sufficient-statistic reduction for the exact non-Gaussian held-out loss, so
+every objective evaluation touches the data and the cost of tuning is dominated
+by how many evaluations the search needs.
+
+## Negative binomial and beta need their nuisance parameter
+
+Gamma is the easy case: its dispersion enters the log-likelihood
+multiplicatively, plus terms free of the linear predictor, so it cancels out of
+the criterion and Gamma tuning never needed it. Negative binomial and beta are
+different -- theta appears as $\theta(\mu - y)/(\mu + \theta)$ and the
+precision inside $\psi(\mu\phi)$ -- so the criterion cannot be evaluated
+without a value.
+
+The value used is the one that formed the working variance, not a fresh
+estimate. That is a correctness requirement rather than a convenience: the
+held-out loss scores per-fold coefficients that were themselves computed from
+$\bar W$ and $\bar d$ under that variance, so evaluating them under a
+different nuisance would no longer be a held-out predictive loss for the model
+being fitted.
+
+Practically, that means supplying it through the family so it survives into the
+initial fit:
 
 ```{r, eval = FALSE}
-fit_full <- fgee(
-  formula = Y ~ X1 + X2,
-  data = dat,
-  cluster = "ID",
-  family = "binomial",
-  time = "time",
-  corr_long = "ar1",
-  corr_fn = "ar1",
-  max.iter = 100,
-  cv = "fastkfold",
-  joint.CI = "wild",
-  var.type = "sandwich"
+fit_nb <- fgee(
+  formula = Y ~ X1 + X2, data = dat, cluster = "ID",
+  family = mgcv::nb(),                 # or mgcv::nb(theta = 3) to fix it
+  time = "time", corr_long = "exchangeable", corr_fn = "ar1"
 )
 
-fit_full$n_iter
-fit_full$converged
-```
-
-## Fully-iterated tuning and fully-iterated final fit
-
-If you also want the cross-validation stage to use the fully-iterated fit instead of the one-step approximation, set `tune.method = "fully-iterated"`.
-
-```{r, eval = FALSE}
-fit_full_tuned <- fgee(
-  formula = Y ~ X1 + X2,
-  data = dat,
-  cluster = "ID",
-  family = "binomial",
-  time = "time",
-  corr_long = "ar1",
-  corr_fn = "ar1",
-  max.iter = 100,
-  tune.method = "fully-iterated",
-  cv = "fastkfold",
-  joint.CI = "wild",
-  var.type = "sandwich"
-)
-```
-
-## `gee.fit = FALSE`: robust inference for the initial `pffr()` fit only
-
-Set `gee.fit = FALSE` when you want to keep the initial `pffr()` mean fit and compute robust inference without performing the GEE update.
-This is useful when you want a direct comparison between:
-
-- the initial `pffr()` fit,
-- the one-step fGEE fit, and
-- the fully-iterated fGEE fit.
-
-```{r, eval = FALSE}
-fit_pffr_robust <- fgee(
-  formula = Y ~ X1 + X2,
-  data = dat,
-  cluster = "ID",
-  family = "binomial",
-  time = "time",
-  gee.fit = FALSE,
-  max.iter = 1,
-  joint.CI = "wild",
-  var.type = "sandwich"
+fit_beta <- fgee(
+  formula = Y ~ X1 + X2, data = dat, cluster = "ID",
+  family = mgcv::betar(),
+  time = "time", corr_long = "exchangeable", corr_fn = "ar1"
 )
 ```
 
-When `gee.fit = FALSE`, the package does not construct a non-independence working covariance for the update step. In practice this is the cleanest way to obtain **robust sandwich-based inference for the initial `pffr()` fit only**.
+`MASS::negative.binomial()` will not work: `mgcv` rejects a plain family object
+that lacks variance derivatives, inside `refund::pffr()`, before any fastFGEE
+code runs. `mgcv::nb(theta = )` is the way to fix theta.
 
-A direct comparison of the three fits can be made as follows:
+One caveat to carry. Whatever `mgcv::nb()` or `mgcv::betar()` reports is
+estimated by REML under an **independence** likelihood, which is misspecified
+for correlated functional data, and a flexible smoother can absorb variability
+that would otherwise appear as overdispersion. The package therefore records
+which nuisance value was used and updates it only at the designated final
+working-state calculation; it does not re-estimate the nuisance parameter for
+every candidate smoothing vector.
+
+Dedicated selector simulations support retaining fastK as the non-Gaussian
+default. Relative to `fastk_grad_fast`, fastK was never materially worse in the
+examined tiers, whereas pure `sandwich_qreml` had coefficient-RMSE ratios as
+large as 1.5653 for a concurrent negative-binomial functional-covariate design
+and 1.4785 for the corresponding beta design under functional-independence
+working-correlation misspecification. `qreml_fastk` reached the same fastK
+answers but was 1.16--1.31 times slower, and `fastk_staged` showed no advantage
+off Gaussian identity-link models. These results motivate the current automatic
+dispatch; they do not imply that fastK is uniformly optimal outside the
+validated simulation regimes.
+
+## Why the non-Gaussian default changed in 0.3.0
+
+Before 0.3.0 the non-Gaussian default was `"fastk_grad"`, which began by
+scoring a dense 55-point common-scale ray, a qREML candidate and two axis
+probes per smoothing parameter, and then ran four independent L-BFGS-B
+optimisations. With three smoothing parameters that is roughly 62 exact
+objective evaluations spent on choosing a starting point, against 4 to 46 spent
+in the optimiser. The start search, not the optimisation, was the expense.
+
+`"fastk_grad_fast"` optimises the *same* criterion from a cheaper start:
+
+1. a coarse common-scale ray, $\lambda = 10^{c}\lambda_{\text{fREML}}$ for
+   $c \in \{-3, \dots, 3\}$, extended outward while its best point sits on an
+   endpoint and then refined by one-dimensional search;
+2. a sparse anisotropic stage around that point, letting the smoothing
+   parameters separate -- a $3^q$ grid for small $q$ and a coordinate sweep
+   otherwise, so the cost grows linearly rather than exponentially in $q$;
+3. a single continuous polish, with a second start only when the optimiser
+   fails to converge, stops on a boundary, leaves a large projected gradient, or
+   a runner-up candidate is close in criterion but far away in $\log\lambda$.
+
+Probe evaluations drop from about 62 to about 34, isolated tuning is roughly
+three times faster, and complete fits are 1.2 to 1.5 times faster, with the
+larger gains at larger problems.
+
+`"fastk_grad"` is still available and unchanged:
 
 ```{r, eval = FALSE}
-p_pffr <- fgee.plot(
-  fit_pffr_robust,
-  xlab = "Functional Domain",
-  title_names = c("pffr: Intercept", "pffr: X1", "pffr: X2")
+fit_prev <- fgee(
+  formula = Y ~ X1 + X2, data = dat, cluster = "ID",
+  family = binomial(), time = "time",
+  corr_long = "exchangeable", corr_fn = "ar1",
+  sp.method = "fastk_grad"
 )
-
-p_1step <- fgee.plot(
-  fit_1step,
-  xlab = "Functional Domain",
-  title_names = c("One-step: Intercept", "One-step: X1", "One-step: X2")
-)
-
-p_full <- fgee.plot(
-  fit_full,
-  xlab = "Functional Domain",
-  title_names = c("Fully-iterated: Intercept", "Fully-iterated: X1", "Fully-iterated: X2")
-)
-
-gridExtra::grid.arrange(p_pffr, p_1step, p_full, nrow = 3)
 ```
+
+## Evidence for the change
+
+Changing a default selector changes which $\lambda$ is returned, so the two
+selectors were compared in simulation rather than on timing alone.
+
+Data were generated through a Gaussian copula: correlated latent normals are
+mapped to uniforms and then through the inverse marginal distribution
+function, so the response is *exactly* Bernoulli, Poisson or Gamma at the
+intended mean while remaining correlated within a cluster. The marginal
+coefficient functions that a GEE targets are therefore known in closed form.
+This matters: adding a correlated error to the linear predictor instead would
+make the marginal mean an attenuated version of the coefficient functions under
+a non-linear link, and comparing estimates against them would show bias that is
+an artefact of the simulation rather than a property of the estimator.
+
+With 300 replicates per configuration, four cluster and visit configurations,
+and both selectors seeing identical data at each replicate:
+
+* no comparison of slope root-mean-square error was significant after
+  adjustment for multiplicity;
+* pointwise and simultaneous coverage of the studentised wild cluster bootstrap
+  intervals differed by at most 0.008, against a Monte Carlo standard error of
+  0.013;
+* the same held under three working-correlation misspecification scenarios:
+  independent longitudinally, independent functionally, and both.
+
+## A caution about reading $\lambda$
+
+The fastK criterion is very flat in places. Two selectors can return smoothing
+parameters differing by orders of magnitude while agreeing on the fitted
+coefficient functions to five significant figures. When comparing selectors,
+compare the criterion value, the fitted coefficients, the effective degrees of
+freedom, or coefficient error -- not $\lambda$.
+
+## The optional compiled kernel
+
+Each non-Gaussian objective evaluation computes, for every fold, a linear
+predictor, a loss and its derivative, and a crossproduct for the score
+contribution. In R that allocates several vectors as long as the fold for every
+fold of every evaluation. A compiled kernel does the same arithmetic in one
+pass with no intermediate allocation, making objective evaluations two to three
+times faster.
+
+The kernel is an accelerator, not a change of method: it reproduces the R
+objective to about $10^{-16}$ in both the score and the gradient, so turning it
+off cannot move a fitted model. It is used automatically when available, and
+every entry point falls back to the R implementation otherwise. To disable it:
+
+```{r, eval = FALSE}
+fit_no_kernel <- fgee(
+  formula = Y ~ X1 + X2, data = dat, cluster = "ID",
+  family = binomial(), time = "time",
+  corr_long = "exchangeable", corr_fn = "ar1",
+  fastk.kernel = FALSE
+)
+
+# or for the whole session
+options(fastFGEE.kernel = FALSE)
+```
+
+## The compiled working-correlation inverse
+
+A second compiled kernel sits under `getD()`/`getW()`. When both correlations
+are independence, exchangeable, or regular-grid AR(1), the closed-form
+precision operators are applied in one allocation and two strided passes,
+rather than by reshaping each cluster block, permuting it with `aperm()` and
+permuting it back. On the largest benchmark cell that took the working-statistics
+build from 2.27 s to 1.07 s and its share of a whole fit from 24% to 13%.
+
+The same caveat as the fastK kernel applies with one addition. The kernel
+reproduces the R operator to about $10^{-16}$, so it cannot meaningfully change
+a fitted model — but the fastK criterion is flat in some directions, and a
+perturbation that small can move a selected `lambda` on a plateau by orders of
+magnitude. Compare `fit$beta` rather than `fit$lambda` when checking a run with
+the kernel on against one with it off:
+
+```{r, eval = FALSE}
+options(fastFGEE.corr.kernel = FALSE)
+```
+
+FPCA functional correlation and an explicitly requested
+`corr.solver = "supergauss"` remain separate paths. Irregular-grid AR(1) now
+uses the package's compiled exact tridiagonal Markov precision, avoiding both a
+dense inverse and the archived `irregulAR1` dependency.
+
+## Workspace memory for non-Gaussian tuning
+
+`fastk.memory = "balanced"` is the recommended default. It is the only current
+layout that builds `prep$X_eval`, which is required by the compiled fastK
+loss/gradient kernel. The `"speed"` and `"lowmem"` layouts therefore use the R
+evaluation path.
+
+Fresh-process measurements found no regime in which `"lowmem"` reduced peak
+resident memory; it retained the long working table and was substantially
+slower. It is deprecated and will be removed in a future release. `"speed"`
+remains available for cases where a modest reduction in retained workspace is
+worth slower R evaluation.
+
+Peak memory must be assessed in a fresh R process because the long data, model
+matrix, package dependencies, and transient working-statistics construction
+usually dominate the retained fastK workspace.
 
 # Working correlation structures
 
@@ -273,7 +397,6 @@ fit_long_block <- fgee(
   corr_long = "ar1",
   corr_fn = "independence",
   rho.smooth = TRUE,
-  max.iter = 1,
   joint.CI = "wild",
   var.type = "sandwich"
 )
@@ -293,7 +416,6 @@ fit_fn_block <- fgee(
   corr_long = "independence",
   corr_fn = "exchangeable",
   rho.smooth = TRUE,
-  max.iter = 1,
   joint.CI = "wild",
   var.type = "sandwich"
 )
@@ -312,7 +434,6 @@ fit_sep <- fgee(
   time = "time",
   corr_long = "ar1",
   corr_fn = "ar1",
-  max.iter = 1,
   joint.CI = "wild",
   var.type = "sandwich"
 )
@@ -335,7 +456,6 @@ fit_fpca_block <- fgee(
   time = "time",
   corr_long = "independence",
   corr_fn = "fpca",
-  max.iter = 1,
   joint.CI = "wild",
   var.type = "sandwich"
 )
@@ -354,7 +474,6 @@ fit_fpca_sep <- fgee(
   time = "time",
   corr_long = "ar1",
   corr_fn = "fpca",
-  max.iter = 1,
   joint.CI = "wild",
   var.type = "sandwich"
 )
@@ -436,7 +555,6 @@ fit_from_pffr <- fgee(
   time = "time",
   corr_long = "exchangeable",
   corr_fn = "independence",
-  max.iter = 1,
   joint.CI = "wild",
   var.type = "sandwich"
 )
@@ -446,15 +564,14 @@ fgee.plot(fit_from_pffr)
 
 # Variance estimators and confidence intervals
 
-The variance estimator and the joint confidence interval construction are controlled separately.
-
-- `var.type` chooses the covariance estimator for the coefficient vector,
-- `joint.CI` chooses how the joint critical values are obtained.
-
-Common choices are:
+`var.type` selects the coefficient covariance estimator. The historically named
+`joint.CI` argument selects pointwise calibration and, when requested, a
+whole-curve maximum-statistic simultaneous band. These are distinct targets:
+pointwise coverage at each location does not imply simultaneous coverage over
+the entire function.
 
 ```{r, eval = FALSE}
-# Sandwich variance + wild-bootstrap critical values
+# Sandwich covariance with studentized wild-cluster calibration
 fit_sw <- fgee(
   formula = Y ~ X1 + X2,
   data = dat,
@@ -467,7 +584,7 @@ fit_sw <- fgee(
   joint.CI = "wild"
 )
 
-# Fast cluster bootstrap variance + wild-bootstrap critical values
+# Fast cluster-bootstrap covariance with the same wild calibration
 fit_fb <- fgee(
   formula = Y ~ X1 + X2,
   data = dat,
@@ -480,69 +597,100 @@ fit_fb <- fgee(
   boot.samps = 2000,
   joint.CI = "wild"
 )
-
-# Sandwich variance + parametric joint critical values
-fit_param <- fgee(
-  formula = Y ~ X1 + X2,
-  data = dat,
-  cluster = "ID",
-  family = "binomial",
-  time = "time",
-  corr_long = "ar1",
-  corr_fn = "ar1",
-  var.type = "sandwich",
-  joint.CI = "parametric"
-)
 ```
 
-A practical default for many applications is `var.type = "sandwich"` with `joint.CI = "wild"`.
-This is also the most direct setting when comparing `gee.fit = FALSE`, one-step, and fully-iterated fits.
+A practical default is `var.type = "sandwich"` with `joint.CI = "wild"`. The
+resulting simultaneous band is a resampling-based whole-curve procedure, not a
+guarantee of nominal finite-sample coverage. Reliability can deteriorate with
+few independent clusters, concentrated cluster leverage, unstable nuisance
+parameters, or unstable working-correlation estimates. In particular, making
+fully iterated or exact experimental code inaccessible does not remove these
+small-sample limitations.
 
-# Gaussian exact mode
+# Public-interface notes
 
-For Gaussian responses with the identity link, `exact = TRUE` uses the exact penalized GLS-style update instead of the approximate one-step update.
-For non-Gaussian families, `exact = TRUE` is ignored.
+Compared with older versions:
 
-```{r, eval = FALSE}
-fit_gaussian_exact <- fgee(
-  formula = Y ~ X1 + X2,
-  data = dat,
-  cluster = "ID",
-  family = "gaussian",
-  time = "time",
-  corr_long = "ar1",
-  corr_fn = "ar1",
-  exact = TRUE,
-  max.iter = 1,
-  joint.CI = "wild",
-  var.type = "sandwich"
-)
-```
+- `cov.type` is replaced by `corr_long` and `corr_fn`;
+- `sandwich` is replaced by `var.type`;
+- public fitting is always one-step;
+- `pffr.mod` remains the supported way to supply an initial `refund::pffr()` fit;
+- experimental exact, legacy, pffr-only, and fully iterated controls are internal.
 
-# Notes on the updated interface
+# Optimized one-step engine
 
-Compared with the older vignette, the main argument changes are:
+The package uses a compact one-pass working-statistics engine by default for public one-step workflows. For cluster `i`, it forms
 
-- `cov.type` is replaced by `corr_long` and `corr_fn`,
-- `sandwich` is replaced by `var.type`,
-- `max.iter` now explicitly controls one-step versus fully-iterated fitting,
-- `gee.fit = FALSE` gives robust inference for the initial `pffr()` fit,
-- `pffr.mod` is the supported way to pass in a pre-fit `refund::pffr()` object.
+\[
+W_i = Z_i^T R_i^{-1} Z_i, \qquad
+ d_i = Z_i^T R_i^{-1} r_i,
+\]
 
-In most analyses, the current recommended pattern is:
+by applying the working-correlation inverse once to the augmented matrix
+`cbind(Z_i, r_i)`. Regular AR(1) and exchangeable structures use direct
+precision operators. The established `SuperGauss` Toeplitz implementation is
+still available and can be forced with `corr.solver = "supergauss"`.
+
+The public default remains the studentized wild-cluster procedure for pointwise intervals and optional simultaneous bands. Consequently,
+`working.retain = "auto"` resolves to `"scores"`: the fit retains the compact
+`p` by `N` matrix of cluster score contributions and aggregate bread matrices,
+but not one `p` by `p` bread matrix for every cluster.
 
 ```{r, eval = FALSE}
 fit <- fgee(
-  formula = Y ~ X1 + X2,
+  Y ~ X1 + X2,
   data = dat,
   cluster = "ID",
-  family = "binomial",
+  family = binomial(link = "logit"),
   time = "time",
-  corr_long = "ar1",
+  corr_long = "exchangeable",
   corr_fn = "ar1",
-  max.iter = 1,
-  cv = "fastkfold",
-  joint.CI = "wild",
-  var.type = "sandwich"
+  sp.method = "auto",
+  working.retain = "auto",
+  corr.solver = "auto"
 )
 ```
+
+Available smoothing selectors include:
+
+- `fastk_staged`: the published staged fast cluster-CV criterion;
+- `fastk_grad`: continuous analytic-gradient optimization of the same exact
+  fastK criterion;
+- `sandwich_qreml`: an experimental coefficient-space working restricted
+  quasi-likelihood with one-sided sandwich information scaling;
+- `qreml_fastk`: qREML initialization followed by exact fastK optimization.
+
+`qreml_fastk` is retained for reproducibility, but in the selector
+simulations it reached the same fastK answers as `fastk_grad_fast` while taking
+1.16--1.31 times as long. `fastk_staged` remains the Gaussian identity default;
+it showed no advantage for the non-Gaussian families. Pure `sandwich_qreml` is
+an opt-in experimental selector: it can be efficient when the working
+correlation is well specified, but its worst examined coefficient-RMSE ratios
+relative to `fastk_grad_fast` were 1.5653 for concurrent negative-binomial data
+and 1.4785 for concurrent beta data under functional-independence
+misspecification. It is therefore not the automatic default.
+
+For Gaussian identity-link models, both staged and gradient fastK use fold
+sufficient statistics after preparation. The tuning objective therefore does
+not revisit the observation-level functional design at every candidate
+smoothing vector.
+
+Large fitted objects can be reduced after fitting with:
+
+```{r, eval = FALSE}
+fit_small <- fgee(
+  Y ~ X1 + X2,
+  data = dat,
+  cluster = "ID",
+  family = gaussian(),
+  time = "time",
+  joint.CI = FALSE,
+  sp.method = "sandwich_qreml",
+  keep.data = FALSE,
+  keep.initial.fit = FALSE,
+  keep.working.stats = FALSE
+)
+```
+
+The legacy engine remains unexported and is reached only by package regression
+tests and method-development code.

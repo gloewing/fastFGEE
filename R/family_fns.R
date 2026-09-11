@@ -272,7 +272,7 @@ gee_family_fns <- function(family,
 # ============================================================================
 #' @keywords internal
 #' @noRd
-get_family_info <- function(fit.initial) {
+.fgee_get_family_info_core <- function(fit.initial) {
 
   family_obj   <- fit.initial$family
   fam_name_raw <- family_obj$family
@@ -352,7 +352,18 @@ get_family_info <- function(fit.initial) {
       if (.is_pos(th1)) th0 <- th1
     }
 
-    if (.is_pos(th0)) dispersion_cpp <- th0 else dispersion_cpp <- 1.0
+    if (.is_pos(th0)) {
+      dispersion_cpp <- th0
+    } else {
+      warning(
+        "Could not determine the negative-binomial theta for family '",
+        fam_name_raw, "'; falling back to theta = 1, which changes the ",
+        "working variance from mu + mu^2/theta to mu + mu^2. Fit with ",
+        "mgcv::nb() or mgcv::nb(theta = ) so the value is carried on the ",
+        "family object.", call. = FALSE
+      )
+      dispersion_cpp <- 1.0
+    }
 
   } else if (identical(family_cpp, "beta")) {
 
@@ -377,7 +388,26 @@ get_family_info <- function(fit.initial) {
       ph0 <- .num1(ph0)
     }
 
-    if (.is_pos(ph0)) dispersion_cpp <- ph0 else dispersion_cpp <- 1.0
+    # Parse the parenthesised value, mirroring the negative-binomial ladder
+    # above. Beta previously had no string fallback at all, so a family object
+    # holding its precision only in "Beta regression(4.399)" silently became
+    # phi = 1.
+    if (!.is_pos(ph0)) {
+      ph1 <- .num1(sub(".*\\(([^\\)]+)\\).*", "\\1", fam_name_raw))
+      if (.is_pos(ph1)) ph0 <- ph1
+    }
+
+    if (.is_pos(ph0)) {
+      dispersion_cpp <- ph0
+    } else {
+      warning(
+        "Could not determine the beta-regression precision for family '",
+        fam_name_raw, "'; falling back to precision = 1, which makes the ",
+        "working variance mu(1 - mu)/2. Fit with mgcv::betar() so the value ",
+        "is carried on the family object.", call. = FALSE
+      )
+      dispersion_cpp <- 1.0
+    }
   }
 
   list(
@@ -446,7 +476,7 @@ get_family_info <- function(fit.initial) {
 # -----------------------------------------------------------------------------
 #' @keywords internal
 #' @noRd
-fgee_update_working_cols_dt <- function(dx,
+.fgee_update_working_cols_dt_core <- function(dx,
                                         namesd,
                                         beta,
                                         family,
@@ -609,7 +639,7 @@ fgee_update_working_cols_dt <- function(dx,
     if (!inherits(muprime2, "try-error")) muprime <- muprime2
   }
 
-  dd[, (muprime_col) := as.numeric(muprime)]
+  data.table::set(dd, j = muprime_col, value = as.numeric(muprime))
 
 
   # -----------------------

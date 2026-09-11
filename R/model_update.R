@@ -1,6 +1,9 @@
 #' @keywords internal
 #' @noRd
-fgee_model_update <- function(mod.fit, MM,
+fgee_model_update <- function(mod.fit,
+                              MM = NULL,
+                              eta = NULL,
+                              fitted = NULL,
                               coef_name = "beta",
                               store_in = c("model", "self"),
                               lp_name = "linear.predictors",
@@ -13,46 +16,45 @@ fgee_model_update <- function(mod.fit, MM,
   }
   beta <- as.numeric(mod.fit[[coef_name]])
 
-  if (missing(MM) || is.null(MM)) stop("MM must be provided (design matrix).")
+  # The optimized engine already has the final linear predictor and mean in its
+  # long working table. Reusing them avoids rebuilding/copying a potentially
+  # very large M x p model matrix solely to update the fitted mgcv object.
+  if (is.null(eta)) {
+    if (is.null(MM)) stop("Provide either MM or eta.")
+    eta <- drop(MM %*% beta)
+  } else {
+    eta <- as.numeric(eta)
+  }
+  if (!length(eta) || any(!is.finite(eta))) {
+    stop("eta must be a non-empty finite vector.")
+  }
 
-  # allow Matrix objects etc.
-  eta <- drop(MM %*% beta)
-
-  # Where is the fitted model object stored?
   tgt <- if (store_in == "model") mod.fit$model else mod.fit
-
   if (is.null(tgt)) stop("Target model object is NULL; set store_in correctly.")
   if (is.function(tgt)) stop("Target model object is a function, not a fit.")
 
-  # ---- set coefficients
   tgt$coefficients <- beta
   if (!is.null(tgt$coef) || "coef" %in% names(tgt)) tgt$coef <- beta
-
-  # ---- linear predictor
   tgt[[lp_name]] <- eta
 
-  # robust link/family extraction is already done by gee_family_fns,
-  # we just need to pass it the family object.
-  if (is.null(tgt$family)) stop("Could not determine family. Expected $family on the fitted object.")
+  if (is.null(fitted)) {
+    if (is.null(tgt$family)) {
+      stop("Could not determine family. Expected $family on the fitted object.")
+    }
+    f_link <- gee_family_fns(
+      family = tgt$family,
+      dispersion = .fgee_nuisance_value(mod.fit, "dispersion", suppressWarnings(mod.fit$rho$dispersion)),
+      theta = .fgee_nuisance_value(mod.fit, "theta", suppressWarnings(mod.fit$rho$theta)),
+      precision = .fgee_nuisance_value(mod.fit, "precision", suppressWarnings(mod.fit$rho$precision))
+    )
+    fitted <- f_link$linkinv(eta)
+  }
+  fitted <- as.numeric(fitted)
+  if (length(fitted) != length(eta) || any(!is.finite(fitted))) {
+    stop("fitted must be finite and have the same length as eta.")
+  }
+  tgt[[fitted_name]] <- fitted
 
-  # 1. Call the modern helper function to get the correct linkinv function
-  f_link <- gee_family_fns(
-    family = tgt$family,
-    # Pass nuisance parameters from the final model fit if they exist.
-    # Use suppressWarnings to avoid issues if these are NULL.
-    dispersion = suppressWarnings(mod.fit$rho$dispersion),
-    theta = suppressWarnings(mod.fit$rho$theta),
-    precision = suppressWarnings(mod.fit$rho$precision)
-  )
-
-  # 2. Use the returned linkinv function to calculate mu
-  mu <- f_link$linkinv(eta)
-
-  # =========================================================================
-
-  tgt[[fitted_name]] <- mu
-
-  # write back
   if (store_in == "model") {
     mod.fit$model <- tgt
   } else {

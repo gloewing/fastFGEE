@@ -14,7 +14,7 @@
 #' @param time Optional name of the longitudinal ordering variable.
 #' @param long.dir Logical; retained for backwards compatibility.
 #' @param var.type Variance estimator. One of `"sandwich"`, `"fastboot"`,
-#'   or `"boot"`. For bootstraping, we recommend "fastboot" over "boot" because it is more thoroughly tested.
+#'   or `"boot"`. For bootstrapping, we recommend "fastboot" over "boot" because it is more thoroughly tested.
 #' @param pffr.mod Optional fitted `refund::pffr()` object to use as the
 #'   initial estimator.
 #' @param knots Number of spline knots for the initial `pffr()` fit.
@@ -36,11 +36,65 @@
 #' @param max.iter Maximum number of GEE iterations. `1` gives the one-step fit.
 #' @param tune.method Smoothing-parameter tuning method.
 #' @param boot.samps Number of bootstrap replicates used when applicable.
+#' @param working.engine Internal implementation. `"optimized"` uses the
+#'   compact one-pass working-statistics engine; `"legacy"` preserves the CRAN
+#'   0.1.0 implementation for comparison and unsupported workflows.
+#' @param sp.method Smoothing-parameter selector. `"auto"` uses exact staged
+#'   fastK for Gaussian identity-link models and analytic-gradient fastK for
+#'   supported non-Gaussian models: binomial with a logit link, Poisson and
+#'   Gamma with a log link, negative binomial (NB2) with a log link, and beta
+#'   regression with a logit link. Other choices are `"fastk_staged"`,
+#'   `"fastk_grad"`, `"fastk_grad_fast"`, `"sandwich_qreml"`,
+#'   `"qreml_fastk"`, and `"legacy"`.
+#'
+#'   Negative binomial and beta additionally need a positive scalar nuisance
+#'   (theta, precision) to evaluate the criterion, and it is taken from the one
+#'   that formed the working variance rather than re-estimated. Supply it
+#'   through the family: `mgcv::nb()`, `mgcv::nb(theta = )` or `mgcv::betar()`.
+#'   `MASS::negative.binomial()` cannot be used, because `mgcv` rejects a plain
+#'   family object lacking variance derivatives before any of this code runs.
+#' @param working.retain Cluster-statistic retention level. `"auto"` keeps the
+#'   smallest representation required by the requested workflow. Because
+#'   `joint.CI="wild"` is the default, the effective default is `"scores"`:
+#'   individual cluster score vectors and aggregate bread matrices are kept,
+#'   but individual cluster bread matrices are not.
+#' @param corr.solver Correlation inverse backend. `"auto"` uses closed-form
+#'   regular AR(1) and exchangeable precision operators and falls back to
+#'   `SuperGauss`; `"supergauss"` forces the established Toeplitz backend.
+#' @param fastk.K Number of cluster folds for optimized fastK tuning.
+#' @param fastk.seed Seed used to construct optimized fastK folds.
+#' @param fastk.memory Memory strategy for non-Gaussian exact fastK loss
+#'   evaluation: `"balanced"`, `"speed"`, or `"lowmem"`.
+#' @param fastk.start Initialization strategy for analytic-gradient fastK.
+#' @param qreml.phi.method Information-scaling diagnostic used by sandwich
+#'   qREML: penalized-subspace, all-coefficient, or fixed scaling.
+#' @param qreml.phi.fixed Fixed information scale when
+#'   `qreml.phi.method="fixed"`.
+#' @param qreml.phi.weight Weight applied to the estimated information
+#'   mismatch before clipping.
+#' @param qreml.phi.clip Lower and upper safeguards for the qREML information
+#'   scale. The default `c(1, 8)` is one-sided: empirical score variability can
+#'   reduce, but cannot increase, the working information.
+#' @param keep.tuning.workspace Logical; retain large tuning workspaces for
+#'   debugging. The default discards them from the fitted object.
+#' @param verbose.tuning Logical; print optimized tuning progress.
+#' @param keep.data Logical; retain the long-format working data in the fitted
+#'   object. Set to `FALSE` to reduce retained object size after fitting.
+#' @param keep.initial.fit Logical; retain the original `pffr()` initial fit as
+#'   `pffr_initial.fit`.
+#' @param keep.working.stats Logical; retain compact initial and final
+#'   `fgee_working_stats` objects in the fitted object.
 #' @param ... Additional arguments reserved for future use.
-#' @return A "fgee1step" object. \code{pffr_initial.fit} contains the initial fit refund::pffr object.
-#' \code{vb} contains the variance/covariance matrix for the coefficient estimates (sandwich or bootstrap-based).
-#' \code{qn} contains the joint CI quantiles. \code{di} and \
-#' \code{wi} are lists of length N, with the updated cluster-specific estimating equation and hessian terms (without the penalty).
+#' @return An object of class `"fgee1step"`. Important components include
+#'   `beta`, the fitted basis coefficients; `vb`, their covariance matrix;
+#'   `model`, the updated `pffr`/`mgcv` model; `lambda`, the selected smoothing
+#'   parameters; `tuning`, compact selector diagnostics; and `working0` and
+#'   `working`, compact initial and final cluster statistics when
+#'   `keep.working.stats=TRUE`. With the optimized engine, the legacy `di*` and
+#'   `wi*` list fields are populated only when `working.retain="full"`; under
+#'   the default score-retention path, cluster scores are stored once as the
+#'   `p` by `N` matrices `working0$D` and `working$D`, while aggregate bread
+#'   matrices are available as `Wbar0` and `Wbar`.
 #' @author Gabriel Loewinger \email{gloewinger@@gmail.com}
 #' @examples
 #' \donttest{
@@ -61,9 +115,10 @@
 #' @references Gabriel Loewinger, Alex W. Levis, Erjia Cui, and Francisco Pereira. (2025).
 #' Fast Penalized Generalized Estimating Equations for Large Longitudinal Functional Datasets. \emph{arXiv:2506.20437}.
 #'
-#' @export
+#' @keywords internal
+#' @noRd
 
-fgee <- function(formula, data, cluster, family,
+.fgee_fit_internal_core <- function(formula, data, cluster, family,
                  corr_fn = "ar1",
                  corr_long = "ar1",
                  time = NULL,
@@ -76,6 +131,7 @@ fgee <- function(formula, data, cluster, family,
                  cv.grid = NULL,
                  exact = FALSE,
                  rho.smooth = FALSE,
+                 rho.pool = c("fn", "none", "long", "both"),
                  joint.CI = "wild",
                  gee.fit = TRUE,
                  linpred_method = c("accumulate", "matrix"),
@@ -85,6 +141,26 @@ fgee <- function(formula, data, cluster, family,
                  max.iter = 1,
                  tune.method = c("one-step", "fully-iterated"),
                  boot.samps = 3000,
+                 working.engine = c("optimized", "legacy"),
+                 sp.method = c("auto", "fastk_staged", "fastk_grad",
+                               "fastk_grad_fast", "sandwich_qreml",
+                               "qreml_fastk", "legacy"),
+                 working.retain = c("auto", "scores", "aggregate", "full"),
+                 corr.solver = c("auto", "exact", "supergauss"),
+                 fastk.K = 10L,
+                 fastk.seed = 1L,
+                 fastk.memory = c("balanced", "speed", "lowmem"),
+                 fastk.start = c("qreml", "robust", "compact"),
+                 fastk.kernel = fgee_fastk_kernel_ok(),
+                 qreml.phi.method = c("penalized", "all", "fixed"),
+                 qreml.phi.fixed = NULL,
+                 qreml.phi.weight = 1,
+                 qreml.phi.clip = c(1, 8),
+                 keep.tuning.workspace = FALSE,
+                 verbose.tuning = TRUE,
+                 keep.data = TRUE,
+                 keep.initial.fit = TRUE,
+                 keep.working.stats = TRUE,
                  ...) {
 
   # === Check for duplicate arguments ===
@@ -96,7 +172,7 @@ fgee <- function(formula, data, cluster, family,
 
   dots <- list(...)
   if (length(dots) > 0 && !is.null(names(dots))) {
-    formal_args <- names(formals(fgee))
+    formal_args <- names(formals(.fgee_fit_internal_core))
     formal_args <- formal_args[formal_args != "..."]
     overlap <- intersect(names(dots), formal_args)
     if (length(overlap) > 0) {
@@ -106,6 +182,50 @@ fgee <- function(formula, data, cluster, family,
   }
 
   linpred_method <- match.arg(linpred_method)
+  tune.method <- match.arg(tune.method)
+  working.engine <- match.arg(working.engine)
+  sp.method <- match.arg(sp.method)
+  working.retain <- match.arg(working.retain)
+  corr.solver <- match.arg(corr.solver)
+  fastk.memory <- match.arg(fastk.memory)
+  fastk.start <- match.arg(fastk.start)
+  qreml.phi.method <- match.arg(qreml.phi.method)
+
+  if (!is.numeric(fastk.K) || length(fastk.K) != 1L ||
+      !is.finite(fastk.K) || fastk.K < 2) {
+    stop("`fastk.K` must be a finite integer >= 2.")
+  }
+  fastk.K <- as.integer(fastk.K)
+  if (!is.numeric(fastk.seed) || length(fastk.seed) != 1L ||
+      !is.finite(fastk.seed)) {
+    stop("`fastk.seed` must be a finite scalar.")
+  }
+  fastk.seed <- as.integer(fastk.seed)
+  if (!is.numeric(qreml.phi.weight) || length(qreml.phi.weight) != 1L ||
+      !is.finite(qreml.phi.weight) || qreml.phi.weight < 0 ||
+      qreml.phi.weight > 1) {
+    stop("`qreml.phi.weight` must be a scalar in [0, 1].")
+  }
+  if (!is.null(qreml.phi.clip)) {
+    if (!is.numeric(qreml.phi.clip) || length(qreml.phi.clip) != 2L ||
+        any(!is.finite(qreml.phi.clip)) || any(qreml.phi.clip <= 0)) {
+      stop("`qreml.phi.clip` must be NULL or two positive finite values.")
+    }
+    qreml.phi.clip <- sort(as.numeric(qreml.phi.clip))
+  }
+  if (qreml.phi.method == "fixed" &&
+      (is.null(qreml.phi.fixed) || length(qreml.phi.fixed) != 1L ||
+       !is.finite(qreml.phi.fixed) || qreml.phi.fixed <= 0)) {
+    stop("`qreml.phi.fixed` must be positive and finite when qreml.phi.method='fixed'.")
+  }
+
+  for (nm in c("keep.tuning.workspace", "verbose.tuning", "keep.data",
+               "keep.initial.fit", "keep.working.stats")) {
+    val <- get(nm, inherits = FALSE)
+    if (!is.logical(val) || length(val) != 1L || is.na(val)) {
+      stop("`", nm, "` must be TRUE or FALSE.")
+    }
+  }
 
   if (!inherits(formula, "formula")) stop("`formula` must be a formula.")
   if (!is.data.frame(data)) stop("`data` must be a data.frame or data.table.")
@@ -149,11 +269,17 @@ fgee <- function(formula, data, cluster, family,
       family # If user passes Gamma(link="log"), it's already an object
     }
 
+    # sandwich = "none": refund >= 0.1-40 defaults to "cluster", which fits a
+    # cluster-robust covariance for the initial model.  fgee() uses only the
+    # coefficients, smooth structure and smoothing parameters of that fit, so
+    # the covariance is never read; computing it cost 2.2 to 3.9 times the fit
+    # time and up to 2.1 times its peak memory.
     fit_pffr <- refund::pffr(
       formula = formula,
       algorithm = "bam",
       family = fam,
       discrete = TRUE,
+      sandwich = "none",
       bs.yindex = list(bs = bs,
                        k = knots+1,
                        m = m.pffr),
@@ -181,8 +307,10 @@ fgee <- function(formula, data, cluster, family,
   clusters <- unique(dx$cname_)
   N_clusters <- length(clusters)
 
-  if (isTRUE(exact) & fit_pffr$family$family != "gaussian") {
-    message("exact=TRUE only valid for family='gaussian'. Using one-step (exact=FALSE)")
+  if (isTRUE(exact) &&
+      !(.fgee_family_key(fit_pffr$family) %in% c("gaussian", "normal") &&
+        tolower(fit_pffr$family$link) == "identity")) {
+    message("exact=TRUE is only valid for Gaussian identity-link models; using exact=FALSE.")
     exact <- FALSE
   }
 
@@ -200,11 +328,34 @@ fgee <- function(formula, data, cluster, family,
     cv.grid[[3]] <- c(0.5, 0.75, 1, 1.3, 2, 5)
   }
 
-  mod.fit <- fun.gee1step.dist_itr(
+  if (identical(working.engine, "legacy") && !sp.method %in% c("auto", "legacy")) {
+    warning(
+      "`sp.method='", sp.method, "'` is available only with ",
+      "`working.engine='optimized'`; using the legacy tuning path.",
+      call. = FALSE
+    )
+  }
+
+  use_optimized <- identical(working.engine, "optimized") &&
+    identical(tune.method, "one-step") &&
+    !identical(sp.method, "legacy")
+
+  resolved_sp <- .fgee_resolve_sp_method(sp.method, fit_pffr$family, fit_pffr$family$link)
+  if (use_optimized && resolved_sp %in% c("fastk_staged", "fastk_grad", "qreml_fastk") &&
+      !identical(cv, "fastkfold")) {
+    warning("The optimized fastK methods require cv='fastkfold'; using the legacy engine.")
+    use_optimized <- FALSE
+  }
+  if (identical(working.engine, "optimized") && !use_optimized) {
+    message("Using legacy fGEE engine for this requested workflow.")
+  }
+
+  engine <- if (use_optimized) fun.gee1step.dist_itr.optimized else fun.gee1step.dist_itr
+
+  common_args <- list(
     orig.data = dx,
     dx = dx,
     formula = formula,
-    # family = family,
     X_ = X_cols,
     Y_ = all.vars(formula)[1],
     namesd = X_cols,
@@ -217,35 +368,79 @@ fgee <- function(formula, data, cluster, family,
     bs = bs,
     corr_fn = corr_fn,
     corr_long = corr_long,
-    #parallel = parallel,
     var.type = var.type,
     cv = cv,
     cv.grid = cv.grid,
     rho.smooth = rho.smooth,
+    rho.pool = rho.pool,
     gee.fit = gee.fit,
     joint.CI = joint.CI,
     max.iter = max.iter,
     tune.method = tune.method,
     exact = exact,
-    # V.inv = V.inv,
     linpred_method = linpred_method,
     clip_mu = clip_mu,
     boot.samps = boot.samps
   )
 
-  # update mgcv model object
-  MM <- suppressWarnings(stats::model.matrix(fit_pffr))
-  mod.fit <- fgee_model_update(mod.fit = mod.fit, MM = MM)
+  if (use_optimized) {
+    common_args$cv <- NULL
+    common_args$time <- NULL
+    common_args$sp.method <- resolved_sp
+    common_args$working.retain <- working.retain
+    common_args$corr.solver <- corr.solver
+    common_args$fastk.K <- fastk.K
+    common_args$fastk.seed <- fastk.seed
+    common_args$fastk.memory <- fastk.memory
+    common_args$fastk.start <- fastk.start
+    common_args$qreml.phi.method <- qreml.phi.method
+    common_args$qreml.phi.fixed <- qreml.phi.fixed
+    common_args$qreml.phi.weight <- qreml.phi.weight
+    common_args$qreml.phi.clip <- qreml.phi.clip
+    common_args$keep.tuning.workspace <- keep.tuning.workspace
+    common_args$verbose.tuning <- verbose.tuning
+  }
 
-  result <- append(mod.fit, list(
+  common_args <- common_args[!vapply(common_args, is.null, logical(1))]
+  mod.fit <- do.call(engine, common_args)
+
+
+  # Update the embedded mgcv model. The optimized engine already computed
+  # final eta and mu, so reuse them rather than rebuilding a large model matrix.
+  data_result <- if (use_optimized && !is.null(mod.fit$data)) mod.fit$data else dx
+  if (use_optimized && !is.null(mod.fit$model_eta) && !is.null(mod.fit$model_fitted)) {
+    mod.fit <- fgee_model_update(
+      mod.fit = mod.fit,
+      eta = mod.fit$model_eta,
+      fitted = mod.fit$model_fitted
+    )
+    mod.fit$model_eta <- NULL
+    mod.fit$model_fitted <- NULL
+  } else {
+    MM <- suppressWarnings(stats::model.matrix(fit_pffr))
+    mod.fit <- fgee_model_update(mod.fit = mod.fit, MM = MM)
+    rm(MM)
+  }
+  mod.fit$data <- NULL
+
+  cluster_sizes <- as.vector(
+    data.table::as.data.table(data_result)[, .N, keyby = cname_][, N]
+  )
+
+  if (!isTRUE(keep.working.stats)) {
+    mod.fit$working0 <- NULL
+    mod.fit$working <- NULL
+  }
+
+  result <- c(mod.fit, list(
     call = match.call(),
     formula = formula,
     family = family,
     outcome = all.vars(formula)[1],
     xnames = X_cols,
-    data = dx,
-    pffr_initial.fit = fit_pffr,
-    cluster_sizes = as.vector(dx[, .N, keyby = cname_][, N])
+    data = if (isTRUE(keep.data)) data_result else NULL,
+    pffr_initial.fit = if (isTRUE(keep.initial.fit)) fit_pffr else NULL,
+    cluster_sizes = cluster_sizes
   ))
   class(result) <- "fgee1step"
   result
@@ -268,6 +463,7 @@ fun.gee1step.dist_itr <- function(orig.data, dx, formula, X_, Y_, namesd,
                                   cv.grid,
                                   boot.samps = 3000,
                                   rho.smooth = TRUE,
+                                  rho.pool = c("fn", "none", "long", "both"),
                                   joint.CI = TRUE,
                                   time = NULL,
                                   index = "yindex.vec",
@@ -350,6 +546,7 @@ fun.gee1step.dist_itr <- function(orig.data, dx, formula, X_, Y_, namesd,
     corr_long = corr_long,
     resid_col = "resid",
     rho.smooth = rho.smooth,
+    rho.pool = rho.pool,
     ar = "mom",
     glmfit = if (isTRUE(rho.smooth)) glmfit else NULL,
     fpca_fn = NULL,
@@ -374,8 +571,11 @@ fun.gee1step.dist_itr <- function(orig.data, dx, formula, X_, Y_, namesd,
     copy_dt = FALSE
   )
 
-  gc()
+  ## (explicit gc() removed: R reclaims on its own schedule once the
 
+  ## references are dropped, and a forced full collection here cost
+
+  ## ~18% of legacy-engine fit time for no memory benefit)
   di0 <- D.estimate(
     dx,
     namesd = X_,
@@ -389,7 +589,9 @@ fun.gee1step.dist_itr <- function(orig.data, dx, formula, X_, Y_, namesd,
     id.vec = clusters,
     copy_dt = FALSE
   )
-  gc()
+  ## (explicit gc() removed: R reclaims on its own schedule once the
+  ## references are dropped, and a forced full collection here cost
+  ## ~18% of legacy-engine fit time for no memory benefit)
   # ------------------------------------------------------------
   # Exact Gaussian RHS at beta0 (ONLY for coefficient updates)
   #   - does NOT replace di0 (di0 stays score-based)
@@ -427,7 +629,9 @@ fun.gee1step.dist_itr <- function(orig.data, dx, formula, X_, Y_, namesd,
       copy_dt = FALSE,
       resid_col = "resid_exact"
     )
-    gc()
+    ## (explicit gc() removed: R reclaims on its own schedule once the
+    ## references are dropped, and a forced full collection here cost
+    ## ~18% of legacy-engine fit time for no memory benefit)
     dx[, resid_exact := NULL]
   }
 
@@ -534,6 +738,7 @@ fun.gee1step.dist_itr <- function(orig.data, dx, formula, X_, Y_, namesd,
     index_fn = index_fn,
     index_long = index_long,
     rho.smooth = rho.smooth,
+    rho.pool = rho.pool,
     X_ = X_,
     cv = cv,
     fid_ = index_long,
@@ -594,6 +799,7 @@ fun.gee1step.dist_itr <- function(orig.data, dx, formula, X_, Y_, namesd,
         corr_long = corr_long,
         resid_col = "resid",
         rho.smooth = rho.smooth,
+        rho.pool = rho.pool,
         ar = "mom",
         glmfit = if (isTRUE(rho.smooth)) glmfit else NULL,
         fpca_fn = NULL,
@@ -726,8 +932,8 @@ fun.gee1step.dist_itr <- function(orig.data, dx, formula, X_, Y_, namesd,
     gaussian_v_by = index_fn,
     update_nuisance = "moment",     # or "fixed"
     dispersion = attributes(dr)$nuisance$dispersion,
-    theta = attributes(dr)$theta,
-    precision = attributes(dr)$precision,
+    theta = .fgee_nuisance_value(dr, "theta"),
+    precision = .fgee_nuisance_value(dr, "precision"),
     zi_prob = attributes(dr)$zi_prob,
     clamp_eps = max(1e-8, min(clip_mu, 0.499999)),
     linpred_method = linpred_method,
@@ -748,6 +954,7 @@ fun.gee1step.dist_itr <- function(orig.data, dx, formula, X_, Y_, namesd,
     corr_long = corr_long,
     resid_col = "resid",
     rho.smooth = rho.smooth,
+    rho.pool = rho.pool,
     ar = "mom",
     glmfit = if (isTRUE(rho.smooth)) glmfit else NULL,
     fpca_fn = NULL,
@@ -771,7 +978,9 @@ fun.gee1step.dist_itr <- function(orig.data, dx, formula, X_, Y_, namesd,
     id.vec = clusters,
     copy_dt = FALSE
   )
-  gc()
+  ## (explicit gc() removed: R reclaims on its own schedule once the
+  ## references are dropped, and a forced full collection here cost
+  ## ~18% of legacy-engine fit time for no memory benefit)
   # for sandwich variance estimator, do not use exact D even when exact = TRUE
   di2 <- D.estimate(
     dr,
@@ -786,7 +995,9 @@ fun.gee1step.dist_itr <- function(orig.data, dx, formula, X_, Y_, namesd,
     id.vec = clusters,
     copy_dt = FALSE
   )
-  gc()
+  ## (explicit gc() removed: R reclaims on its own schedule once the
+  ## references are dropped, and a forced full collection here cost
+  ## ~18% of legacy-engine fit time for no memory benefit)
   # ------------------------------------------------------------
   # Variance estimator (uses di2/wi2)
   # ------------------------------------------------------------

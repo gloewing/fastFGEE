@@ -1,38 +1,29 @@
-## Resubmission
+# Development check notes for fastFGEE 0.3.0.9006
 
-This is a resubmission. I addressed the issues from the previous CRAN review as follows:
+This is a development candidate reconstructed from the validated 0.3.0.9004
+source tree. It must not be submitted to CRAN until the commands in
+`validation/run_R_validation.sh` have completed successfully in an R-enabled
+environment.
 
-* added method references directly to the `Description` field in the requested
-  format using DOI / URL links;
-* made the optional archived package `irregulAR1` access path explicit in the
-  `Description` field via the CRAN Archive URL;
-* replaced `\dontrun{}` with `\donttest{}` in `fgee` examples;
-* removed unsuppressible console output from `R/WD_estimate.R` by replacing
-  `print()` calls with informative `stop()` messages.
+## Package-controlled issues addressed
 
-## Test environments
+* The archived `irregulAR1` dependency was removed. The package contains an
+  independent exact tridiagonal precision implementation following Allevius
+  (2018).
+* The `sanic` dependency was removed. Symmetric positive-definite operations use
+  registered Rcpp/LAPACK routines with a base-R fallback.
+* Rcpp is a direct `Imports` and `LinkingTo` dependency; `sourceCpp` is not
+  imported or used.
+* All Rcpp entry points are registered.
+* `refund (>= 0.1-40)` is declared.
+* The public estimator surface is one-step only.
+* The stray `Rplots.pdf` artifact is excluded and checked by the bundle audit.
 
-* local macOS: Apple M1 Max, macOS 15.7.2, R 4.5.1
-* win-builder (release): R 4.5.3
-* win-builder (devel): R-devel (2026-03-31 r89747)
+## Check status in the construction environment
 
-## R CMD check results
-
-0 errors | 0 warnings | 0 notes on local `devtools::check()` / `R CMD check --as-cran`
-
-win-builder checks on release and devel completed with no package warnings or errors.
-The only remaining messages are the CRAN incoming NOTE concerning the suggested
-package `irregulAR1` and the automatic DESCRIPTION spell-check note for the
-bibliographic reference `Loewinger et al. (2025)`.
-
-## Notes
-
-`irregulAR1` is listed only in `Suggests` and is used conditionally for
-optional irregularly spaced AR(1) precision-matrix code paths. The package does
-not require `irregulAR1` for installation, loading, examples, tests, or
-vignettes. Core functionality works without it.
-
-The DESCRIPTION spell-check NOTE flags `Loewinger`, `et`, and `al` from the
-author-year citation `Loewinger et al. (2025)` included in the Description
-field to document the method reference requested in the previous review.
-This is a bibliographic citation, not a misspelling.
+R and Rscript were not installed in the environment that assembled this source
+candidate. Consequently, no claim of a successful `R CMD check` is made here.
+The bundle records the static audit and independent numerical checks and
+contains a fail-fast script for build, install, tests, and `--as-cran` check.
+This file should be replaced with the actual final check environments and
+results after that script passes.

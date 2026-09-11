@@ -233,7 +233,7 @@ joint.qn <- function(glmfit, NN.sim = 5000, alpha = 0.05) {
 
     zero_vec <- rep(0, nrow(Sigma_scl))
     x_sample <- abs(MASS::mvrnorm(NN.sim, zero_vec, Sigma_scl))
-    un <- Rfast::rowMaxs(x_sample, value = TRUE)
+    un <- apply(x_sample, 1L, max)
     qn[i] <- stats::quantile(un, probs = 1 - alpha)
   }
 
@@ -277,7 +277,7 @@ joint.basis.np <- function(glmfit,
     b.mat <- boot.samp[, b.idx, drop = FALSE]
 
     z.beta <- abs(beta[b.idx] - t(b.mat)) / sqrt(var.vec[b.idx])
-    un <- Rfast::colMaxs(z.beta, value = TRUE)
+    un <- apply(z.beta, 2L, max)
     qn[k] <- stats::quantile(un, probs = 1 - alpha)
   }
 
@@ -342,7 +342,7 @@ joint.np <- function(glmfit,
     f.hat <- as.numeric(sm.X %*% beta[b.idx])
 
     z.beta <- abs(f.hat - f.boot.hat) / sqrt(var.vec[grid.idx.k])
-    un <- Rfast::colMaxs(z.beta, value = TRUE)
+    un <- apply(z.beta, 2L, max)
     qn[k] <- stats::quantile(un, probs = 1 - alpha)
   }
 

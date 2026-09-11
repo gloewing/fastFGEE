@@ -24,6 +24,7 @@ corr.est <- function(dx,
                      corr_long = "independent",
                      resid_col = "resid",
                      rho.smooth = FALSE,
+                     rho.pool = c("fn", "none", "long", "both"),
                      ar = c("mom", "yw"),
                      glmfit = NULL,
                      clamp = 0.999,
@@ -40,6 +41,7 @@ corr.est <- function(dx,
                      sort_times = c("auto","always","never")) {
 
   ar <- match.arg(ar)
+  rho.pool <- match.arg(rho.pool)
   fpca_method <- match.arg(fpca_method)
   sort_times <- match.arg(sort_times)
 
@@ -69,6 +71,21 @@ corr.est <- function(dx,
   if (!("rho_fn"   %in% names(dt))) dt[, rho_fn   := NA_real_]
 
   kronecker <- (corr_fn != "independent" && corr_long != "independent")
+
+  ## Pooling of the surviving rho when only ONE direction is correlated.
+  ## Both-correlated (Kronecker/separable) already pools both, so these flags
+  ## only bite in the single-direction cases:
+  ##   pool_fn   : corr_long == "independent" -> a single scalar rho_fn instead
+  ##               of one per longitudinal index.  Default ON.  rho_fn indexed
+  ##               by visit has no partial-pooling model behind it, and a
+  ##               scalar lets .fgee_apply_cluster_inverse() take its batched
+  ##               Kronecker path with R_long = I (never inverted).
+  ##   pool_long : corr_fn == "independent" -> a single scalar rho_long instead
+  ##               of rho_long(s).  Default OFF.  Variation of the longitudinal
+  ##               correlation over the functional domain is a modelling
+  ##               feature, and s is a common dense grid across clusters.
+  pool_fn   <- kronecker || rho.pool %in% c("fn", "both")
+  pool_long <- kronecker || rho.pool %in% c("long", "both")
 
   # ----- helpers -----
   .clamp_rho <- function(rho, type) {
@@ -106,8 +123,12 @@ corr.est <- function(dx,
 
     if (ar == "yw") {
       rho_i <- tryCatch({
-        out <- Rfast::ar1(r, method = "yw")
-        if (is.numeric(out) && length(out) >= 2) as.numeric(out[2]) else NA_real_
+        # Yule-Walker AR(1): the lag-1 autocorrelation. Previously
+        # Rfast::ar1(method = "yw"), whose second element is this quantity;
+        # computed here in base R so Rfast is not a dependency.
+        rc <- stats::acf(r, lag.max = 1L, type = "correlation",
+                         plot = FALSE, demean = TRUE)$acf
+        if (length(rc) >= 2L) as.numeric(rc[2L]) else NA_real_
       }, error = function(e) NA_real_)
       if (!is.finite(rho_i)) return(list(num = NA_real_, den = NA_real_))
       return(list(num = rho_i, den = 1))
@@ -139,7 +160,7 @@ corr.est <- function(dx,
 
     dt[, rho_long := 0]
 
-  } else if (kronecker) {
+  } else if (pool_long) {
 
     if (verbose) message("corr.est: Kronecker pooled rho_long")
 
@@ -211,7 +232,7 @@ corr.est <- function(dx,
 
     dt[, rho_fn := NA_real_]
 
-  } else if (kronecker) {
+  } else if (pool_fn) {
 
     if (verbose) message("corr.est: Kronecker pooled rho_fn")
 
@@ -298,7 +319,9 @@ corr.est <- function(dx,
     dx = dt,
     fpca = fpca_fn,
     rho = list(rho_long = rho_long_tbl, rho_fn = rho_fn_tbl),
-    info = list(kronecker = kronecker, corr_fn = corr_fn, corr_long = corr_long,
+    info = list(kronecker = kronecker, rho.pool = rho.pool,
+                pool_fn = pool_fn, pool_long = pool_long,
+                corr_fn = corr_fn, corr_long = corr_long,
                 sort_times = sort_times)
   )
 }
