@@ -1,29 +1,58 @@
-# Development check notes for fastFGEE 0.3.0.9006
+## Submission
 
-This is a development candidate reconstructed from the validated 0.3.0.9004
-source tree. It must not be submitted to CRAN until the commands in
-`validation/run_R_validation.sh` have completed successfully in an R-enabled
-environment.
+This is a major update to fastFGEE, the first since 0.1.0. It replaces the
+estimation engine, adds compiled routines, and removes two optional
+dependencies. The exported interface (`fgee()`, `fgee.plot()`) is unchanged in
+meaning and in its required arguments.
 
-## Package-controlled issues addressed
+## Test environments
 
-* The archived `irregulAR1` dependency was removed. The package contains an
-  independent exact tridiagonal precision implementation following Allevius
-  (2018).
-* The `sanic` dependency was removed. Symmetric positive-definite operations use
-  registered Rcpp/LAPACK routines with a base-R fallback.
-* Rcpp is a direct `Imports` and `LinkingTo` dependency; `sourceCpp` is not
-  imported or used.
-* All Rcpp entry points are registered.
-* `refund (>= 0.1-40)` is declared.
-* The public estimator surface is one-step only.
-* The stray `Rplots.pdf` artifact is excluded and checked by the bundle audit.
+* local: x86_64 Linux, R 4.4.3 -- `R CMD check --as-cran`
+* r-universe: Windows (R 4.5.3, 4.6.1, 4.7.0), macOS (R 4.5.3, 4.6.1),
+  Linux (R 4.6.1, 4.7.0), wasm (R 4.6.0) -- all build and install cleanly
 
-## Check status in the construction environment
+## R CMD check results
 
-R and Rscript were not installed in the environment that assembled this source
-candidate. Consequently, no claim of a successful `R CMD check` is made here.
-The bundle records the static audit and independent numerical checks and
-contains a fail-fast script for build, install, tests, and `--as-cran` check.
-This file should be replaced with the actual final check environments and
-results after that script passes.
+0 errors | 0 warnings | 2 notes
+
+Both notes are properties of the local check machine, not the package:
+
+* "unable to verify current time" -- the machine has no reachable time service.
+* "Compilation used the following non-portable flag(s): '-march=nocona'" --
+  this flag comes from the local conda toolchain's default CXXFLAGS, not from
+  the package. `src/Makevars` sets only
+  `PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)` and specifies no
+  architecture flags.
+
+## Changes that reviewers may wish to note
+
+* The package now contains compiled code (`NeedsCompilation: yes`). Rcpp moves
+  from `Suggests` to `Imports` and is added to `LinkingTo`. All compiled entry
+  points are registered and `R_useDynamicSymbols` is disabled.
+
+* The archived package 'irregulAR1' is no longer used. Exact tridiagonal
+  precision operations for irregularly sampled continuous-time AR(1) working
+  correlations are now implemented inside fastFGEE from the published formulas
+  of Allevius (2018). No code from the archived package is used. The previous
+  DESCRIPTION text directing users to the CRAN Archive has been removed.
+
+* The 'sanic' dependency is no longer used. Symmetric positive-definite solves
+  use LAPACK through registered compiled routines, with a base-R Cholesky
+  fallback.
+
+* 'Rfast' is no longer a dependency. 'SuperGauss' moves from `Imports` to
+  `Suggests`; both it and 'RcppArmadillo' are reached only through
+  `requireNamespace()` guards.
+
+* Four arguments that selected non-default estimation workflows have been
+  removed from `fgee()`: `exact`, `gee.fit`, `max.iter` and `tune.method`.
+  They now raise an informative error rather than being silently ignored, so
+  code written against 0.1.0 fails loudly instead of quietly changing meaning.
+  This is documented in NEWS.md under "Breaking changes".
+
+* A test suite (testthat, edition 3) is included for the first time: 103 test
+  files, 2112 passing assertions, 0 failures.
+
+## Downstream dependencies
+
+There are no reverse dependencies on CRAN.
