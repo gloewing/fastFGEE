@@ -5,6 +5,17 @@
 #'
 #' The main user-facing functions are [fgee()] and [fgee.plot()].
 #'
+#' @section Supported families:
+#' The package supports quasi-likelihoods derived from a range of
+#' distributions. Substantial simulation evidence exists for quasi-likelihoods
+#' derived from Gaussian, binomial, Poisson, negative binomial, Gamma and beta
+#' families, across a range of sample sizes, cluster sizes and working
+#' correlation specifications. Other families understood by `refund::pffr()`
+#' are likely to be supported but have not been examined as thoroughly in
+#' simulation, so results for them should be interpreted with corresponding
+#' care. For negative binomial outcomes use `mgcv::nb()`; for proportion
+#' outcomes use `mgcv::betar()`.
+#'
 #' @section Numerical backends:
 #' The package directly imports Rcpp and links its registered compiled routines.
 #' Internal LAPACK Cholesky routines are used for symmetric positive-definite

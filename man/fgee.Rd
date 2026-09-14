@@ -51,7 +51,7 @@ fgee(
 \item{formula}{A model formula whose left-hand side is a functional response.}
 \item{data}{A data frame containing the variables in \code{formula}.}
 \item{cluster}{Name of the cluster identifier column.}
-\item{family}{A family object or family name understood by \code{refund::pffr()}.}
+\item{family}{A family object or family name understood by \code{refund::pffr()}. Substantial simulation evidence exists for quasi-likelihoods derived from Gaussian, binomial, Poisson, negative binomial, Gamma and beta families; other families supported by \code{refund::pffr()} are likely to work but have not been examined as thoroughly. For negative binomial outcomes use \code{mgcv::nb()}, and for proportion outcomes use \code{mgcv::betar()}; \code{MASS::negative.binomial()} is not accepted and raises an informative error.}
 \item{corr_fn}{Working correlation in the functional direction: \code{"independent"}, \code{"exchangeable"}, \code{"ar1"}, or \code{"fpca"}.}
 \item{corr_long}{Working correlation in the longitudinal direction: \code{"independent"}, \code{"exchangeable"}, or \code{"ar1"}.}
 \item{time}{Optional name of the longitudinal ordering variable.}

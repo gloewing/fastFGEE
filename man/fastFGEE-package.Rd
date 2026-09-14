@@ -10,6 +10,10 @@ Fits functional generalized estimating equations for longitudinal functional out
 \details{
 The main user-facing functions are \code{\link{fgee}} and \code{\link{fgee.plot}}.
 }
+\section{Supported families}{
+The package supports quasi-likelihoods derived from a range of distributions. Substantial simulation evidence exists for quasi-likelihoods derived from Gaussian, binomial, Poisson, negative binomial, Gamma and beta families, across a range of sample sizes, cluster sizes and working correlation specifications. Other families understood by \code{refund::pffr()} are likely to be supported but have not been examined as thoroughly in simulation, so results for them should be interpreted with corresponding care. For negative binomial outcomes use \code{mgcv::nb()}; for proportion outcomes use \code{mgcv::betar()}.
+}
+
 \section{Numerical backends}{
 The package directly imports Rcpp and links registered compiled routines. Internal LAPACK Cholesky routines are used for symmetric positive-definite solves. Exact tridiagonal Markov precision operations for irregularly sampled continuous-time AR(1) working correlations are implemented within fastFGEE from the formulas of Allevius (2018); no code from the archived \pkg{irregulAR1} package is used. \pkg{SuperGauss} remains an optional backend for explicitly requested regular-grid Toeplitz calculations. \pkg{RcppArmadillo} is retained only for historical developer-side experimental CV helpers.
 }

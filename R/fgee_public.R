@@ -11,6 +11,13 @@
 #' @param data A data frame containing the variables in `formula`.
 #' @param cluster Name of the cluster identifier column.
 #' @param family A family object or family name understood by `refund::pffr()`.
+#'   Substantial simulation evidence exists for quasi-likelihoods derived from
+#'   Gaussian, binomial, Poisson, negative binomial, Gamma and beta families;
+#'   other families supported by `refund::pffr()` are likely to work but have
+#'   not been examined as thoroughly. For negative binomial outcomes use
+#'   `mgcv::nb()`, and for proportion outcomes use `mgcv::betar()`;
+#'   `MASS::negative.binomial()` is not accepted and raises an informative
+#'   error.
 #' @param corr_fn Working correlation in the functional direction: one of
 #'   `"independent"`, `"exchangeable"`, `"ar1"`, or `"fpca"`.
 #' @param corr_long Working correlation in the longitudinal direction: one of

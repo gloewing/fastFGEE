@@ -9,8 +9,10 @@ Authors@R:
 Description: Fits functional generalized estimating equations for longitudinal
     functional outcomes and covariates using a one-step estimator that is fast
     even for large cluster sizes or large numbers of clusters. The package
-    supports quasi-likelihoods derived from a range of families, common link
-    functions, and several working correlation structures. An optimized engine
+    supports quasi-likelihoods derived from a range of distributions, with
+    substantial simulations run for quasi-likelihoods derived from Gaussian,
+    binomial, Poisson, negative binomial, Gamma and beta families. It supports
+    common link functions and several working correlation structures. An optimized engine
     constructs cluster score and sensitivity statistics in one pass, provides
     coefficient-space Gaussian cross-validation, analytic-gradient fast cluster
     cross-validation, and an experimental sandwich-scaled working restricted
