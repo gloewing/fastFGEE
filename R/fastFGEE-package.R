@@ -51,6 +51,8 @@
 #' @importFrom mgcv s
 #' @importFrom Rcpp evalCpp
 #' @importFrom stats na.omit
+#' @importFrom stats setNames
+#' @importFrom utils head tail
 "_PACKAGE"
 
 ## usethis namespace: start
