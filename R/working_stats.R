@@ -658,27 +658,52 @@
 
     Z <- X * (mp / sv)
     Q <- cbind(Z, resid)
-    rinv_Q <- .fgee_apply_cluster_inverse(
+    rho_fn_i <- if ("rho_fn" %in% names(dd)) dd$rho_fn[ii] else NULL
+    rho_long_i <- if ("rho_long" %in% names(dd)) dd$rho_long[ii] else NULL
+
+    # Wi and di are the only consumers of R^{-1} Q, so when both axes are
+    # exchangeable or independent the Gram matrix can be formed directly from
+    # rank-one sufficient statistics without applying the inverse at all.
+    # NULL falls through to the reference apply path below.
+    gram <- .fgee_cluster_gram(
       Q,
       idx_fn = dd[[index_fn]][ii],
       idx_long = dd[[index_long]][ii],
       corr_fn = corr_fn,
       corr_long = corr_long,
-      rho_fn = if ("rho_fn" %in% names(dd)) dd$rho_fn[ii] else NULL,
-      rho_long = if ("rho_long" %in% names(dd)) dd$rho_long[ii] else NULL,
-      fpca_apply = fpca_apply,
+      rho_fn = rho_fn_i,
+      rho_long = rho_long_i,
       grid_type = grid_type,
       corr_solver = corr_solver,
-      algo = algo,
-      tol = tol,
-      cache = corr_cache,
       index_fn = index_fn,
       index_long = index_long
     )
 
-    Wi <- crossprod(Z, rinv_Q[, seq_len(p), drop = FALSE])
+    if (is.null(gram)) {
+      rinv_Q <- .fgee_apply_cluster_inverse(
+        Q,
+        idx_fn = dd[[index_fn]][ii],
+        idx_long = dd[[index_long]][ii],
+        corr_fn = corr_fn,
+        corr_long = corr_long,
+        rho_fn = rho_fn_i,
+        rho_long = rho_long_i,
+        fpca_apply = fpca_apply,
+        grid_type = grid_type,
+        corr_solver = corr_solver,
+        algo = algo,
+        tol = tol,
+        cache = corr_cache,
+        index_fn = index_fn,
+        index_long = index_long
+      )
+      Wi <- crossprod(Z, rinv_Q[, seq_len(p), drop = FALSE])
+      di <- as.numeric(crossprod(Z, rinv_Q[, p + 1L]))
+    } else {
+      Wi <- gram[seq_len(p), seq_len(p), drop = FALSE]
+      di <- as.numeric(gram[seq_len(p), p + 1L])
+    }
     Wi <- 0.5 * (Wi + t(Wi))
-    di <- as.numeric(crossprod(Z, rinv_Q[, p + 1L]))
 
     if (any(!is.finite(Wi)) || any(!is.finite(di))) {
       stop("Non-finite W or d in cluster '", ids[i], "'.")
