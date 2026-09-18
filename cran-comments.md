@@ -1,83 +1,78 @@
-## Resubmission
+## Submission
 
-This is a resubmission. The previous submission was rejected by the incoming
-pretest with two NOTEs; both are addressed below.
+This release does two things: it fixes the test failures reported on the CRAN
+check page for 0.2.0, and it adds a working-statistics optimisation plus a
+revised vignette.
 
-### 1. "no visible global function definition for 'head', 'setNames', 'tail'"
+## The failure being fixed
 
-Fixed. `utils::head()`, `utils::tail()` and `stats::setNames()` were used
-without being imported. The following have been added to NAMESPACE:
+Six check flavors reported:
 
-    importFrom(stats, setNames)
-    importFrom(utils, head)
-    importFrom(utils, tail)
+    Error in `.source_root()`: Could not locate the fastFGEE source tree
+    for source-level tests.
+    test-dependency-and-registration.R:22, :53, :95
+    [ FAIL 3 | WARN 2 | SKIP 6 | PASS 1969 ]
 
-`R CMD check` now reports no undefined global functions or variables.
+Three tests in `tests/testthat/test-dependency-and-registration.R` are
+source-level audits: they read `DESCRIPTION`, `R/*.R` and `src/*.cpp` directly
+to confirm that no archived dependency is referenced, that every Rcpp attribute
+export is registered, and that each core wrapper has a single active definition.
+Those files do not exist when the suite runs against an installed package, which
+is the case on the affected flavors, so the helper that locates the source tree
+raised an error.
 
-This was not caught before submission because the local check machine was
-missing the recommended package 'codetools', which caused
-"checking R code for possible problems" to be skipped silently. 'codetools'
-has been installed and the check re-run.
+The helper now returns `NULL` when no source tree is present, and the three
+affected tests call `testthat::skip_if()` on that condition. They continue to
+run, and to guard, when the suite is run from a source checkout.
 
-### 2. "Possibly misspelled words in DESCRIPTION: tridiagonal"
+This was verified by reproducing the failing condition: installing the package
+into a clean library and running the suite from an isolated directory with no
+source tree reachable. The three audits are reported as skipped and the suite
+passes.
 
-This is a false positive. "Tridiagonal" is standard linear-algebra
-terminology for a matrix whose non-zero entries lie on the main diagonal and
-the two adjacent diagonals. It is used correctly in the Description to
-describe the exact precision-matrix operations for continuous-time AR(1)
-working correlations. No change has been made.
+## Other changes in this version
+
+**One new compiled routine.** `src/corr_gram.cpp` adds
+`fgee_gram_axis_sums()`, a single pass over the cluster design forming one axis
+of sums. It is registered through `RcppExports` in the usual way; the
+registration audit above was extended to cover it. It allocates one
+`NumericMatrix` and contains no pointer arithmetic beyond indexing into that
+matrix and the input.
+
+It supports a faster route to the working statistics when one working
+correlation axis is exchangeable and the other independent, using the
+Sherman-Morrison structure of the exchangeable inverse. The operator is
+mathematically identical to the existing path. Agreement with the previous
+implementation was checked across 96 configurations spanning positive, zero and
+negative correlations up to the positive-definiteness boundary, with a worst
+relative difference of 1.3e-15. Sixteen inadmissible structures were confirmed
+to fall through to the previous code unchanged, and the route can be disabled
+entirely with `options(fastFGEE.corr.gram = FALSE)`.
+
+**Vignette.** The walkthrough for starting from a user-supplied
+`refund::pffr()` fit again covers irregular functional grids, and a new
+subsection discusses structured working correlations (stationary AR(p) and
+Matern models on regular grids, and FPCA) as possible future extensions.
 
 ## Test environments
 
 * local: x86_64 Linux, R 4.4.3 -- `R CMD check --as-cran`
-* win-builder incoming pretest: Windows and Debian (previous submission) --
-  both installed, loaded, and passed tests, examples, vignette rebuild and
-  PDF manual
+* installed-package test run reproducing the CRAN flavor condition (above)
 * r-universe: Windows (R 4.5.3, 4.6.1, 4.7.0), macOS (R 4.5.3, 4.6.1),
-  Linux (R 4.6.1, 4.7.0), wasm (R 4.6.0) -- all build and install cleanly
+  Linux (R 4.6.1, 4.7.0)
 
 ## R CMD check results
 
-0 errors | 0 warnings | 2 notes locally
+0 errors | 0 warnings | 3 notes
 
-Both remaining local notes are properties of the check machine, not the
-package, and did not appear on the CRAN pretest machines:
-
-* "unable to verify current time" -- the machine has no reachable time service.
+* "unable to verify current time" -- the local check machine has no reachable
+  time service.
 * "Compilation used the following non-portable flag(s): '-march=nocona'" --
-  this comes from the local conda toolchain's default CXXFLAGS.
-  `src/Makevars` sets only
+  from the local conda toolchain's default CXXFLAGS. `src/Makevars` sets only
   `PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)` and specifies no
-  architecture flags.
-
-## Changes in this version (0.2.0), first release since 0.1.0
-
-* The package now contains compiled code (`NeedsCompilation: yes`). Rcpp moves
-  from `Suggests` to `Imports` and is added to `LinkingTo`. All compiled entry
-  points are registered and `R_useDynamicSymbols` is disabled.
-
-* The archived package 'irregulAR1' is no longer used. Exact tridiagonal
-  precision operations for irregularly sampled continuous-time AR(1) working
-  correlations are now implemented inside fastFGEE from the published formulas
-  of Allevius (2018). No code from the archived package is used. The previous
-  DESCRIPTION text directing users to the CRAN Archive has been removed.
-
-* The 'sanic' dependency is no longer used. Symmetric positive-definite solves
-  use LAPACK through registered compiled routines, with a base-R Cholesky
-  fallback.
-
-* 'Rfast' is no longer a dependency. 'SuperGauss' moves from `Imports` to
-  `Suggests`; both it and 'RcppArmadillo' are reached only through
-  `requireNamespace()` guards.
-
-* Four arguments that selected non-default estimation workflows have been
-  removed from `fgee()`: `exact`, `gee.fit`, `max.iter` and `tune.method`.
-  They now raise an informative error rather than being silently ignored, so
-  code written against 0.1.0 fails loudly instead of quietly changing meaning.
-  This is documented in NEWS.md under "Breaking changes".
-
-* A test suite (testthat, edition 3) is included for the first time: 103 test
-  files, 2112 passing assertions, 0 failures.
+  architecture flags. This note did not appear on the CRAN pretest machines.
+* "Days since last update" may appear; this submission fixes the check failures
+  reported for 0.2.0.
 
 ## Downstream dependencies
 

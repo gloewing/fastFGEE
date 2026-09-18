@@ -1,7 +1,7 @@
 Package: fastFGEE
 Title: Fast Functional Generalized Estimating Equations via a One-Step
         Estimator
-Version: 0.2.0
+Version: 0.2.2
 Authors@R:
     person("Gabriel", "Loewinger", email = "gloewinger@gmail.com",
            role = c("aut", "cre"),

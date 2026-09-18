@@ -10,6 +10,20 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
+// fgee_gram_axis_sums
+NumericMatrix fgee_gram_axis_sums(const NumericMatrix& Q, int n_fun, int n_long, bool by_fn);
+RcppExport SEXP _fastFGEE_fgee_gram_axis_sums(SEXP QSEXP, SEXP n_funSEXP, SEXP n_longSEXP, SEXP by_fnSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const NumericMatrix& >::type Q(QSEXP);
+    Rcpp::traits::input_parameter< int >::type n_fun(n_funSEXP);
+    Rcpp::traits::input_parameter< int >::type n_long(n_longSEXP);
+    Rcpp::traits::input_parameter< bool >::type by_fn(by_fnSEXP);
+    rcpp_result_gen = Rcpp::wrap(fgee_gram_axis_sums(Q, n_fun, n_long, by_fn));
+    return rcpp_result_gen;
+END_RCPP
+}
 // fgee_kron_inverse_kernel
 NumericMatrix fgee_kron_inverse_kernel(const NumericMatrix& Q, int n_fun, int n_long, int code_fn, double rho_fn, int code_long, double rho_long);
 RcppExport SEXP _fastFGEE_fgee_kron_inverse_kernel(SEXP QSEXP, SEXP n_funSEXP, SEXP n_longSEXP, SEXP code_fnSEXP, SEXP rho_fnSEXP, SEXP code_longSEXP, SEXP rho_longSEXP) {
@@ -121,6 +135,7 @@ END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
+    {"_fastFGEE_fgee_gram_axis_sums", (DL_FUNC) &_fastFGEE_fgee_gram_axis_sums, 4},
     {"_fastFGEE_fgee_kron_inverse_kernel", (DL_FUNC) &_fastFGEE_fgee_kron_inverse_kernel, 7},
     {"_fastFGEE_fastk_fold_kernel", (DL_FUNC) &_fastFGEE_fastk_fold_kernel, 9},
     {"_fastFGEE_fgee_sympd_inverse_cpp", (DL_FUNC) &_fastFGEE_fgee_sympd_inverse_cpp, 1},

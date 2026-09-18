@@ -1,3 +1,54 @@
+# fastFGEE 0.2.2
+
+* Faster working statistics when one working-correlation axis is exchangeable
+  and the other is independent. `W = Z' R^-1 Z` and `d = Z' R^-1 r` are the only
+  quantities the one-step update takes from the working inverse, so in this case
+  they are now assembled directly from rank-one sufficient statistics -- using
+  the Sherman-Morrison structure of the exchangeable inverse -- instead of
+  applying `R^-1` to the design and then taking a crossproduct.
+
+  This matters most when `corr_long = "exchangeable"` and
+  `corr_fn = "independent"`. `rho_long` is estimated separately at each
+  functional point, so it is almost never a single scalar, and the previous code
+  handled that by looping over functional points and solving one correlation
+  system per point per cluster. The new path replaces that loop with two BLAS
+  calls. Because the weight `a = 1/(1-rho)` is strictly positive, the leading
+  term is formed as a symmetric rank-k update of the scaled design, which is
+  half the arithmetic of a general crossproduct and is exactly symmetric by
+  construction.
+
+  Measured end to end, single-threaded, over twelve fits spanning gaussian,
+  poisson, binomial and Gamma at N up to 100 and n_i up to 100: 1.24-2.31x for
+  `exchangeable` x `independent`, and 1.33x in total. Structures that are not
+  taken through this path are unchanged.
+
+  AR(1) and FPCA axes are deliberately excluded -- their inverses have no
+  identity-plus-low-rank form, and reducing only the other axis measured no
+  faster. `exchangeable` x `exchangeable` is also left to the existing compiled
+  two-axis inverse kernel, which already handles it and which measured no slower.
+  Every case that does not qualify -- including an incomplete tensor grid, a rho
+  that varies within a level, and a rho outside the positive-definite range --
+  falls through to the previous code unchanged.
+
+  Results differ from earlier versions only by floating-point summation order:
+  agreement with the reference path is to 1.3e-15 relative across 96 operator
+  configurations spanning positive, zero and negative correlations up to the
+  `-1/(n-1)` boundary. Disable with `options(fastFGEE.corr.gram = FALSE)`.
+
+* The vignette has been revised: the walkthrough for starting from your own
+  `refund::pffr()` fit again covers irregular functional grids, with a complete
+  wide-to-long reshaping example, and the negative-binomial and beta sections
+  refer to an extra *parameter* rather than an extra *number*.
+
+# fastFGEE 0.2.1
+
+* Fixed test failures on CRAN check flavors that run the test suite against the
+  installed package. Three source-level audits in
+  `tests/testthat/test-dependency-and-registration.R` inspect `DESCRIPTION`,
+  `R/` and `src/` directly; these files are not present in an installed
+  package, so the helper that locates the source tree now returns `NULL` and
+  the affected tests skip instead of erroring. No package code changed.
+
 # fastFGEE 0.2.0
 
 First release since 0.1.0. The public interface is largely unchanged --

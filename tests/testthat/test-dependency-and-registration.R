@@ -15,11 +15,16 @@
       if (identical(unname(first), "fastFGEE")) return(candidate)
     }
   }
-  stop("Could not locate the fastFGEE source tree for source-level tests.")
+  # No source tree: the tests are running against an installed package
+  # (as on some CRAN check flavors).  Signal this with NULL so the
+  # source-level audits below skip rather than error.
+  NULL
 }
 
 test_that("archived numerical dependencies are absent from executable source", {
   root <- .source_root()
+  testthat::skip_if(is.null(root),
+                    "source tree unavailable; source-level audit skipped")
   desc <- read.dcf(file.path(root, "DESCRIPTION"))[1, ]
   dependency_text <- paste(
     desc[intersect(c("Depends", "Imports", "Suggests", "LinkingTo"), names(desc))],
@@ -51,6 +56,8 @@ test_that("archived numerical dependencies are absent from executable source", {
 
 test_that("every Rcpp attribute export is registered", {
   root <- .source_root()
+  testthat::skip_if(is.null(root),
+                    "source tree unavailable; source-level audit skipped")
   cpp <- list.files(file.path(root, "src"), pattern = "[.]cpp$", full.names = TRUE)
   source_text <- paste(unlist(lapply(cpp, readLines, warn = FALSE),
                               use.names = FALSE), collapse = "\n")
@@ -58,6 +65,7 @@ test_that("every Rcpp attribute export is registered", {
   # merely because both sides of an automated count omitted the same routine.
   expected <- c(
     "_fastFGEE_fgee_kron_inverse_kernel" = 7L,
+    "_fastFGEE_fgee_gram_axis_sums" = 4L,
     "_fastFGEE_fastk_fold_kernel" = 9L,
     "_fastFGEE_fgee_sympd_inverse_cpp" = 1L,
     "_fastFGEE_fgee_sympd_solve_cpp" = 2L,
@@ -93,6 +101,8 @@ test_that("every Rcpp attribute export is registered", {
 
 test_that("nuisance integration has one active definition per core wrapper", {
   root <- .source_root()
+  testthat::skip_if(is.null(root),
+                    "source tree unavailable; source-level audit skipped")
   r_files <- list.files(file.path(root, "R"), pattern = "[.]R$", full.names = TRUE)
   lines <- unlist(lapply(r_files, readLines, warn = FALSE), use.names = FALSE)
   for (name in c("fgee_update_working_cols_dt", "fgee_build_working_stats",
