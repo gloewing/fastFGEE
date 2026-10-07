@@ -1,3 +1,31 @@
+# fastFGEE (development version)
+
+* The internal `gee.fit = FALSE` path (sandwich and wild-bootstrap inference
+  around the initial `pffr()` fit) now puts the initial fit's smoothing
+  parameters on the averaged score scale used by the one-step bread
+  `Wbar + P`. mgcv's smoothing parameters penalise the total deviance or RSS,
+  so the matching penalty on the averaged scale is `S_lambda / (N * c)`, with
+  `N` the number of clusters and `c` the scalar in the working variance
+  (`sig2` for Gaussian, 1 for binomial and Poisson). The raw values
+  over-penalised the bread by that factor and made the standard errors too
+  small; the same penalty also enters the wild-bootstrap centring term and the
+  EDF used for the t adjustment. The returned `lambda` and `pen.mat` of this
+  path are now on the averaged scale. `fgee()` (`gee.fit = TRUE`) is
+  unchanged.
+
+* Regression tests and internal documentation for the above. The scale factor is
+  `N * c_work`, where `c_work` is the dispersion actually multiplied into the
+  working variance: `fit$sig2` for Gaussian, the working dispersion for Gamma,
+  and `1` for binomial, Poisson, the quasi families on the current
+  fixed-nuisance path, negative binomial and beta. In particular the quasi path
+  divides by `N` alone and not by `N * fit$sig2`. The original `pffr()`
+  coefficients and the smoothing parameters stored on the original fitted model
+  are unchanged; it is the values *returned* by this internal path that are on
+  the averaged scale. See the internal `fastFGEE-initial-fit` help page for
+  the scope limits, which
+  include the Gaussian grid-variance convention and the fact that the beta GEE
+  mean score differs from the `mgcv::betar` likelihood score.
+
 # fastFGEE 0.2.2
 
 * Faster working statistics when one working-correlation axis is exchangeable

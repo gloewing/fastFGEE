@@ -139,3 +139,39 @@ penalty_components_from_setup <- function(setup, lambda_length) {
     ", or #penalties=", n_pen, "; got ", q, "."
   )
 }
+
+# Initial-fit penalty on the averaged score scale ------------------------------
+#
+# mgcv's smoothing parameters multiply the penalty on the *total* scale: gam()
+# and bam() minimise the (unscaled) penalised deviance, or ||y - X beta||^2 +
+# beta' S_lambda beta for the Gaussian, so the penalised Hessian of the
+# log-likelihood is (X'WX + S_lambda) / phi and Vp = phi (X'WX + S_lambda)^-1,
+# with W the IRLS weights computed from the unit variance function V(mu).
+#
+# The one-step equations in this package are on the *averaged* cluster scale,
+# Wbar = N^-1 sum_i D_i' V_i^-1 D_i, where the working variance is
+# V_i = c * V(mu) for a scalar c.  The pffr fit's own penalty on that scale is
+# therefore S_lambda / (N * c).  This helper returns N * c:
+#   * Gaussian: c = fit$sig2 (the working variance is the empirical residual
+#     variance at each grid point, whose average is close to sig2);
+#   * dispersion families: the dispersion multiplied into the working
+#     variance (for example fit$sig2 for Gamma), and 1 if none was used, as for
+#     binomial, Poisson and the quasi families with fixed nuisance;
+#   * negative binomial and beta: 1, because theta/precision enter V(mu) in
+#     the same way as in mgcv's extended families.
+#' @keywords internal
+#' @noRd
+.fgee_initial_penalty_scale <- function(fit.initial, N, nuisance = NULL) {
+  N <- as.numeric(N)[1L]
+  if (!is.finite(N) || N < 1) stop("N must be a positive number of clusters.")
+  key <- .fgee_family_key(fit.initial$family)
+  c_scale <- 1
+  if (key %in% c("gaussian", "normal")) {
+    sig2 <- as.numeric(fit.initial$sig2)[1L]
+    if (length(sig2) && is.finite(sig2) && sig2 > 0) c_scale <- sig2
+  } else if (!key %in% c("negbinomial", "beta")) {
+    disp <- if (is.list(nuisance)) as.numeric(nuisance$dispersion)[1L] else NA_real_
+    if (length(disp) && is.finite(disp) && disp > 0) c_scale <- disp
+  }
+  N * c_scale
+}

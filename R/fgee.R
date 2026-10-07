@@ -644,6 +644,11 @@ fun.gee1step.dist_itr <- function(orig.data, dx, formula, X_, Y_, namesd,
     if (is.list(sp_vec)) sp_vec <- sp_vec[[1]]
     sp_vec <- as.numeric(sp_vec)
     if (length(sp_vec) == 0L) sp_vec <- 0
+    # mgcv's sp are on the total scale; var.est() and compute_joint_ci() use
+    # the averaged scale Wbar + P, so rescale by N * scale.
+    sp_vec <- sp_vec / .fgee_initial_penalty_scale(
+      glmfit, length(wi0), attr(dx, "nuisance", exact = TRUE)
+    )
     penalty_diag <- penalty_from_setup(pen_setup, lambda = sp_vec)
 
     vb <- var.est(di = di0, wi = wi0, beta2 = beta0,

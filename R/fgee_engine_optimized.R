@@ -242,7 +242,11 @@ fun.gee1step.dist_itr.optimized <- function(
   ps <- penalty_setup(glmfit, unpenalized = glmfit$nsdf)
 
   if (isFALSE(gee.fit)) {
-    lambda <- .fgee_initial_lambda(glmfit, ps)
+    # The pffr smoothing parameters are on mgcv's total scale; the bread
+    # (Wbar + P), the wild-bootstrap displacement and the EDF all use the
+    # averaged scale, so rescale them once here.
+    lambda <- .fgee_initial_lambda(glmfit, ps) /
+      .fgee_initial_penalty_scale(glmfit, working0$N, working0$nuisance)
     penalty <- penalty_from_setup(ps, lambda)
     vb <- fgee_var_from_stats(
       working = working0,

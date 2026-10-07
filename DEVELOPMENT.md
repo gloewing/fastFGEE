@@ -90,6 +90,41 @@ not a promise of nominal finite-sample coverage. Reliability may be poor with
 few or high-leverage independent clusters or unstable nuisance/correlation
 estimates.
 
+## Internal initial-fit baseline scale
+
+The internal initial-fit path (`gee.fit = FALSE`) holds the supplied `pffr()`
+coefficients fixed and builds sandwich/bootstrap quantities from fastFGEE's
+working scores. mgcv's `sp` penalise the total deviance/RSS; the one-step bread
+`Wbar + P` is on the averaged cluster scale, so the penalty is
+`S_lambda / (N * c_work)` with `c_work` the dispersion actually multiplied into
+the working variance.
+
+`c_work` is not always `fit$sig2`. It is `fit$sig2` for Gaussian (grid-specific
+working variances, retained); the working dispersion for Gamma; and `1` for
+binomial, Poisson, the quasi families on the current fixed-nuisance path,
+negative binomial and beta. The quasi case is the discriminating one: its
+working variance omits any extra scalar, so the divisor is `N`, not
+`N * fit$sig2`.
+
+Two engine-level facts worth remembering when writing tests here:
+
+* `working0` is populated by the optimized engine; the legacy engine returns the
+  per-cluster lists `wi0` / `di0` instead, so a test that needs the bread must
+  read whichever the engine actually filled.
+* For Gamma the two engines may use different working dispersions. The legacy
+  path estimates one from the current fitted mean (and warns), rather than
+  taking `fit$sig2`. Each engine's returned penalty is consistent with its own
+  dispersion, so do not assert equality of the two engines' covariances.
+
+Regression coverage: `tests/testthat/test-initial-penalty-scale-helper.R`
+(dispatch, runs in ordinary checks) and
+`tests/testthat/test-initial-penalty-scale-families.R` (Gamma and quasi-Poisson
+end-to-end against an independently assembled penalty and centred cluster
+sandwich). Scope limits are recorded in `man/fastFGEE-initial-fit.Rd`: this path
+is not universally the exact sandwich of the original pffr likelihood estimator,
+and the Gaussian exact-weighting and beta-likelihood-score questions are
+tracked separately.
+
 ## Validation policy
 
 The prior `0.3.0.9004` numerical and family validation remains the baseline.
